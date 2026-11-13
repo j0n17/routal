@@ -3,14 +3,14 @@
 ## Decisions
 | Topic | Decision |
 |---|---|
-| Base | **Stock Talos Linux** (>= 1.15, Kubernetes-free mode `--skip-k8s-etcd`), not a fork. The fork (branch `talos-fork`) was dropped on 2026-11-13: same result for a router, without carrying 2000 files of merge conflicts. |
+| Base | **Stock Talos Linux** (>= 1.15, Kubernetes-free mode `--skip-k8s-etcd`), not a fork. The fork (kept locally, unpublished) was dropped on 2026-11-13: same result for a router, without carrying 2000 files of merge conflicts. |
 | Router logic | `routald`, a Talos **system extension** (baked into the image, starts at boot without network, versioned with the OS and rolled back with it). |
 | Plugins | Talos `ContainerConfig` declarative containers (UI, adblock, monitoring...), pulled at runtime. |
 | Config | Talos documents for the machine + Routal documents (`router.yaml`), delivered through `ExtensionServiceConfig`. |
 | Safety | Talos `apply-config --mode try --timeout` (auto-rollback) + A/B OS slots. |
 | Data plane | Kernel forwarding + nftables. routald owns the `inet routal` table; Talos owns `inet talos`. |
 | Hardware | x86_64 and arm64. |
-| License | MPL-2.0. |
+| License | MIT (no Talos code is included; reusing a Talos file later would keep that file MPL-2.0 with its header). |
 
 ## How it fits together
 ```

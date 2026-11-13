@@ -1,7 +1,3 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
 // routald is the Routal router agent, shipped as a Talos system extension.
 //
 //	routald run [-config /etc/routal/router.yaml]   apply and keep reconciling (extension entrypoint)

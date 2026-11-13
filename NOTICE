@@ -1,10 +1,9 @@
 Routal
-Licensed under the Mozilla Public License 2.0 (see LICENSE).
+Copyright (c) 2026 j0n17. Licensed under the MIT License (see LICENSE).
 
-Routal is designed to run on Talos Linux (https://github.com/siderolabs/talos,
-Copyright (c) Sidero Labs, Inc., MPL-2.0). It does not include Talos source code;
-the earlier fork is kept, with its original headers, in the `talos-fork` branch.
+Routal runs on Talos Linux (https://github.com/siderolabs/talos, Copyright (c)
+Sidero Labs, Inc., MPL-2.0). It does not include Talos source code.
 
-The extension image bundles Alpine Linux packages, notably nftables (GPL-2.0) and
-its libraries, unmodified. Their sources are available from https://pkgs.alpinelinux.org
-and https://netfilter.org.
+The extension image bundles unmodified Alpine Linux packages, notably nftables
+(GPL-2.0) and its libraries, run as separate programs. Their sources are
+available from https://pkgs.alpinelinux.org and https://netfilter.org.

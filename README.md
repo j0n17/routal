@@ -58,4 +58,4 @@ publishes its own installer image.
 
 ## License
 
-MPL-2.0, see LICENSE and NOTICE. The earlier Talos fork is kept in the `talos-fork` branch.
+MIT, see LICENSE. Third-party components in the extension image are listed in NOTICE.
