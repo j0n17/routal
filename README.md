@@ -3,8 +3,8 @@
 > [!WARNING]
 > **Experiment, not a real project.** This repo is AI-generated code ("AI slop"), written mostly to
 > try out an idea: running a router on stock Talos Linux with a system extension. It has only been
-> tested in a single VM, has no real-traffic tests, and is not maintained. Do not put it in front of
-> anything you care about.
+> tested in VMs and network namespaces, never on real hardware or a real ISP, and is not maintained.
+> Do not put it in front of anything you care about.
 
 A GitOps-managed router built on [Talos Linux](https://www.talos.dev): stock Talos runs the
 machine, and the `routald` system extension turns it into a router.
@@ -13,8 +13,8 @@ machine, and the `routald` system extension turns it into a router.
 |---|---|
 | interfaces, VLANs, bonds, bridges, WireGuard, DHCP client, BGP | IP forwarding |
 | ingress firewall for the router itself | zone firewall for forwarded traffic |
-| A/B upgrades, `apply-config --mode try` (auto-rollback) | masquerade / SNAT, port forwards |
-| API, `talosctl`, Kubernetes-free mode | DHCP server, caching DNS, IPv6 RA (dnsmasq) |
+| A/B upgrades, `apply-config --mode try` (auto-rollback) | masquerade / SNAT, port forwards (with NAT loopback), UPnP |
+| API, `talosctl`, Kubernetes-free mode | DHCP (Kea), caching DNS (Unbound), IPv6 RA (radvd), NTP (chrony), mDNS reflector (Avahi) |
 
 Config is two sets of YAML documents, both kept in git:
 
@@ -24,14 +24,16 @@ Config is two sets of YAML documents, both kept in git:
 ```sh
 routald validate router.yaml
 routald render router.yaml                       # nftables ruleset it will apply
-routald render-dnsmasq router.yaml               # dnsmasq config (DHCP, DNS, RA)
-routald talos-patch router.yaml > router-patch.yaml
+routald render-services router.yaml out/         # daemon configs (Kea, Unbound, radvd, chrony...)
+talosctl get mc -o yaml > current.yaml
+routald talos-patch -current current.yaml router.yaml > router-patch.yaml
 talosctl patch mc --patch @router-patch.yaml --mode try --timeout 2m   # reverts unless confirmed
 ```
 
 `talos-patch` wraps router.yaml in an `ExtensionServiceConfig` (Talos restarts routald with the new
-file) and turns `to: self` rules and port forwards into Talos `NetworkRuleConfig` documents
-(Talos filters traffic to the router's addresses before routald's DNAT runs).
+file) and turns `to: self` rules, port forwards and UPnP into Talos `NetworkRuleConfig` documents
+(Talos filters traffic to the router's addresses before routald's DNAT runs). With `-current`, it
+also deletes the `routal-*` rules the config no longer needs (patches otherwise only add).
 
 ## Router documents (`apiVersion: v1alpha1`)
 
@@ -44,10 +46,13 @@ file) and turns `to: self` rules and port forwards into Talos `NetworkRuleConfig
 | `FirewallAddressGroupConfig` | named IPv4/IPv6 subnets, used as `sourceGroups`/`destinationGroups` | yes (nftables sets) |
 | `FirewallPortGroupConfig` | named ports, used as `portGroups` | yes (nftables sets) |
 | `MasqueradeConfig` | source NAT on an outgoing link | yes |
-| `PortForwardConfig` | destination NAT on an incoming link | yes |
-| `DHCPServerConfig` | DHCPv4 pools and static leases (by MAC) | yes (dnsmasq) |
-| `DNSServerConfig` | caching DNS, local domain, DHCP names, static records | yes (dnsmasq) |
-| `RouterAdvertisementConfig` | IPv6 SLAAC (optionally DHCPv6 options) | yes (dnsmasq) |
+| `PortForwardConfig` | destination NAT on an incoming link, reflected for inside clients (`reflection`, default on) | yes |
+| `UPnPConfig` | devices open their own forwards (UPnP IGD, NAT-PMP, PCP), to their own address only | yes (miniupnpd) |
+| `DHCPServerConfig` | DHCPv4 pools and static leases (by MAC) | yes (Kea) |
+| `DNSServerConfig` | caching DNS, local domain, DHCP client names, static records | yes (Unbound) |
+| `RouterAdvertisementConfig` | IPv6 SLAAC, optionally DHCPv6 options (`other`) | yes (radvd, Kea) |
+| `NTPServerConfig` | time for local networks (does not touch the clock, Talos does) | yes (chrony) |
+| `MDNSReflectorConfig` | mDNS/Bonjour across links (printers, AirPlay, Chromecast across VLANs) | yes (Avahi) |
 
 Links can be kernel names or Talos `LinkAliasConfig` aliases. routald programs its own
 `inet routal` nftables table; Talos keeps `inet talos`.
@@ -58,14 +63,18 @@ Requires Docker (Go builds run in a container).
 
 ```sh
 make test
-make check                     # tests + every example's dnsmasq config checked by the real dnsmasq
+make check                     # + every example's ruleset and daemon configs checked by nft, kea, unbound, radvd, chronyd
+make integration               # data-plane tests in network namespaces (router, LAN, NAS VLAN, WAN, VPN peer)
 make extension ARCH=arm64      # _out/routald-arm64.tar (flat extension for the imager)
 make image ARCH=arm64          # _out/metal-arm64.raw, Talos with routald baked in
+make installer ARCH=arm64      # _out/installer-arm64.tar, the Talos installer with routald (OCI image)
+make push-installer IMAGE=ghcr.io/<you>/routal-installer:v0.1.0
 ```
 
-Booting the image: apply `talosctl gen config --skip-k8s-etcd` plus your patches, and delete the
-generated `UnattendedInstallConfig` (its stock installer would drop the extension) until Routal
-publishes its own installer image.
+Booting the image: apply `talosctl gen config --skip-k8s-etcd` plus your patches, with the install
+image set to your pushed installer (the stock one would drop the extension). Upgrades:
+`talosctl upgrade --image <installer>:<new tag>`; the extension is part of the image.
+Use a new tag per build: Talos reuses an image it already pulled under the same tag.
 
 ## License
 

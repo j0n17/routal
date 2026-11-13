@@ -13,6 +13,7 @@ var (
 	linkRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@-]{0,31}$`)
 	// group names become nftables set names
 	groupRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,30}$`)
+	hostRe  = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,62})(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,62}))*$`)
 )
 
 // Validate checks every document and the references between them.
@@ -209,6 +210,14 @@ func (cfg *Config) Validate() error {
 			fail("%s: rangeEnd is before rangeStart", where)
 		}
 
+		if d.Subnet.IsValid() {
+			errs = append(errs, checkPrefixes(where, []netip.Prefix{d.Subnet})...)
+
+			if !d.Subnet.Addr().Is4() || !d.Subnet.Contains(d.RangeStart) || !d.Subnet.Contains(d.RangeEnd) {
+				fail("%s: subnet %s must be IPv4 and contain the range", where, d.Subnet)
+			}
+		}
+
 		for _, l := range d.StaticLeases {
 			if _, err := net.ParseMAC(l.MAC); err != nil {
 				fail("%s: static lease: invalid mac %q", where, l.MAC)
@@ -216,8 +225,64 @@ func (cfg *Config) Validate() error {
 
 			if !l.Address.Is4() {
 				fail("%s: static lease %s: address must be IPv4", where, l.MAC)
+			} else if d.Subnet.IsValid() && !d.Subnet.Contains(l.Address) {
+				fail("%s: static lease %s: %s is outside subnet %s", where, l.MAC, l.Address, d.Subnet)
+			}
+
+			if l.Hostname != "" && !hostRe.MatchString(l.Hostname) {
+				fail("%s: static lease %s: invalid hostname %q", where, l.MAC, l.Hostname)
 			}
 		}
+	}
+
+	if n := cfg.NTPServer; n != nil {
+		if len(n.ListenLinks) == 0 {
+			fail("NTPServerConfig: listenLinks must not be empty")
+		}
+
+		for _, l := range n.ListenLinks {
+			checkLink("NTPServerConfig", l)
+		}
+
+		for _, u := range n.Upstreams {
+			if !hostRe.MatchString(u) {
+				fail("NTPServerConfig: invalid upstream %q", u)
+			}
+		}
+	}
+
+	if m := cfg.MDNSReflector; m != nil {
+		if len(m.Links) < 2 {
+			fail("MDNSReflectorConfig: links needs at least two links to reflect between")
+		}
+
+		for _, l := range m.Links {
+			checkLink("MDNSReflectorConfig", l)
+		}
+	}
+
+	if u := cfg.UPnP; u != nil {
+		checkLink("UPnPConfig externalLink", u.ExternalLink)
+
+		if len(u.InternalLinks) == 0 {
+			fail("UPnPConfig: internalLinks must not be empty")
+		}
+
+		for _, l := range u.InternalLinks {
+			checkLink("UPnPConfig", l)
+
+			if l == u.ExternalLink {
+				fail("UPnPConfig: link %q is both external and internal", l)
+			}
+		}
+
+		for _, p := range u.ExternalPorts {
+			if p.Lo <= 50001 && p.Hi >= 50000 {
+				fail("UPnPConfig: externalPorts %s include the Talos API ports 50000-50001", p)
+			}
+		}
+
+		errs = append(errs, checkPrefixes("UPnPConfig", u.InternalSubnets)...)
 	}
 
 	if d := cfg.DNSServer; d != nil {
@@ -229,9 +294,13 @@ func (cfg *Config) Validate() error {
 			checkLink("DNSServerConfig", l)
 		}
 
+		if d.LocalDomain != "" && !hostRe.MatchString(d.LocalDomain) {
+			fail("DNSServerConfig: invalid localDomain %q", d.LocalDomain)
+		}
+
 		for _, r := range d.LocalRecords {
-			if r.Name == "" || len(r.Addresses) == 0 {
-				fail("DNSServerConfig: local records need a name and addresses")
+			if !hostRe.MatchString(r.Name) || len(r.Addresses) == 0 {
+				fail("DNSServerConfig: local record %q needs a valid name and addresses", r.Name)
 			}
 		}
 	}
@@ -251,6 +320,10 @@ func (cfg *Config) Validate() error {
 
 		if ra.Managed {
 			fail("%s: managed (stateful DHCPv6) is not supported yet; use SLAAC (default) or other: true", where)
+		}
+
+		if ra.Other && len(ra.Prefixes) == 0 {
+			fail("%s: other: true (DHCPv6 options) needs explicit prefixes", where)
 		}
 
 		for _, p := range ra.Prefixes {

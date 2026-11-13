@@ -8,7 +8,8 @@
 | Plugins | Talos `ContainerConfig` declarative containers (UI, adblock, monitoring...), pulled at runtime. |
 | Config | Talos documents for the machine + Routal documents (`router.yaml`), delivered through `ExtensionServiceConfig`. |
 | Safety | Talos `apply-config --mode try --timeout` (auto-rollback) + A/B OS slots. |
-| Data plane | Kernel forwarding + nftables. routald owns the `inet routal` table; Talos owns `inet talos`. |
+| Data plane | Kernel forwarding + nftables. routald owns the `inet routal` table (and `inet routal_upnp` for miniupnpd's mappings); Talos owns `inet talos`. |
+| Services | Kea (DHCPv4, stateless DHCPv6), Unbound (caching DNS), radvd (RA), chrony (NTP server), Avahi (mDNS reflector), miniupnpd (UPnP, built with nftables). Supervised by routald; each config is checked by the daemon before it is installed. dnsmasq was used first and replaced: Kea/Unbound are what OPNsense/pfSense run and scale further, at the cost of more daemons. |
 | Hardware | x86_64 and arm64. |
 | License | MIT (no Talos code is included; reusing a Talos file later would keep that file MPL-2.0 with its header). |
 
@@ -28,6 +29,16 @@ git ──> talosctl patch mc --mode try (CI or on-device agent, later)
 - Link aliases (`LinkAliasConfig`) are kernel `ifalias` values, not names; routald resolves them from
   `/sys/class/net/*/ifalias` and re-applies when they change (5 s reconcile loop).
 - routald leaves its rules in place when it stops, so a restart never opens the firewall.
+- DHCP client names reach DNS without restarting Unbound: routald reads Kea's lease file and pushes
+  `local_data` through unbound-control (labels are validated: clients choose their names).
+- Kea >= 2.6.3 only accepts lease files under its data directory: routald sets `KEA_DHCP_DATA_DIR`.
+- UPnP: the mapping port range (default 1024-49151, never the Talos API) is opened in Talos; routald
+  drops it on the external link unless miniupnpd DNATed it. Dropping it on every link broke replies
+  to router daemons (the mDNS reflector's legacy unicast answers use ephemeral ports).
+- Port forward reflection needs the router's public address: routald renders it from the link's
+  current addresses and re-applies when they change.
+- Talos creates every extension mount source, so `/run` in the container is a bind of the host's
+  `/run/routal` (already a tmpfs), not a tmpfs mount.
 
 ## Verified (2026-11-13, Talos v1.15.0-beta.0, arm64 tart VM)
 - Extension loads; the service writes the forwarding sysctls (needs `readonlyPaths` without `/proc/sys`).
@@ -78,13 +89,43 @@ the LAN only. Both use the unmodified `examples/home-router` files; the MACs mat
   - Bugs found: Talos can start an extension service before the /var/lib volume exists (fixed by
     `depends: path: /var/lib`). The input chain dropped DNS from the LAN once another zone also had a
     `to: self` rule on port 53 (fixed: accepts per rule, then one drop per protocol on the merged ports).
+- Kea/Unbound/radvd/chrony/Avahi on the same router VM, installed with `talosctl upgrade` to an
+  installer built by `make installer` (pushed to a local registry): the extension survives the
+  upgrade, all daemons start, Kea serves the NAS its static lease (hostname kept in the lease file),
+  chrony runs next to Talos' NTP client. `talos-patch -current` removing a rule produced a
+  `$patch: delete` that Talos applied.
+  Gotchas: a failed extension service keeps the boot sequence in "booting", which blocks reboot and
+  upgrade sequences (`talosctl reboot --mode force`, `upgrade --stage`); and Talos reuses an installer
+  image already pulled under the same tag.
 - How to reproduce: create the VMs with UTM AppleScript (`make new virtual machine`, QEMU backend,
   `network interfaces: {{mode:shared, address:"52:54:00:00:00:01"}, {mode:host, address:"52:54:00:00:00:02"}}`).
   Use an 8 GiB qcow2 converted from `make image`.
 
+## Network namespace tests (`make integration`)
+Router, two LAN clients, a NAS on VLAN 30, a WAN host and a WireGuard peer, each in its own network
+namespace in one privileged container; the router runs routald with `examples/nas-vpn` plus a port
+forward and UPnP. 37 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
+dynamic names, reverse, forwarding), the NAS matrix in IPv4 and IPv6, masquerade, port forward,
+reflection, UPnP mapping and secure mode, NTP, mDNS across the VLAN. Talos itself is emulated
+(links, addresses, aliases); its ingress firewall is not.
+
+## Talos kernel (v1.15.0-beta.0), checked on the VM
+| Feature | Kernel | Consequence |
+|---|---|---|
+| PPPoE | `CONFIG_PPP=y`, `CONFIG_PPP_ASYNC=y`, `CONFIG_PPPOE` not set | user-space PPPoE (rp-pppoe through pppd's pty) works from the extension; kernel PPPoE needs the option upstream |
+| Flowtables offload | `CONFIG_NF_FLOW_TABLE` not set | not possible on stock Talos |
+| cake | `CONFIG_NET_SCH_CAKE` not set | SQM possible with HTB + fq_codel (both built in, `ifb` as a module) |
+| Own modules | `module.sig_enforce=1` | a module extension must be signed with the Talos kernel key: kernel options must come from siderolabs/pkgs |
+
 ## Next
-1. FQDN-based rules (dnsmasq nftset; Alpine's dnsmasq is built without it, so routald must ship its own build).
-2. Own installer image (Image Factory schematic or imager `installer` output) so install/upgrade keeps the extension.
-3. GitOps: CI workflow (render + `--mode try` + health check + confirm), then an on-device pull agent.
-4. Stale `NetworkRuleConfig` cleanup when a `to: self` rule is removed (patches only add).
-5. VRRP for router HA; flowtables offload; `routalctl` wrapper (validate, diff, apply) if `talosctl` + `routald` aren't enough.
+1. Kernel options upstream (siderolabs/pkgs, as modules): `PPPOE`, `NF_FLOW_TABLE(_INET)` + `NFT_FLOW_OFFLOAD`, `NET_SCH_CAKE`.
+2. WAN: DHCPv6 prefix delegation client (Talos has none; in routald, assigning a /64 per LAN link,
+   radvd's `prefix ::/64` then announces it), PPPoE (pppd + rp-pppoe user space until kernel PPPoE),
+   ISP DHCP options (e.g. option 90, VLAN priority).
+3. SQM: `SQMConfig` with HTB + fq_codel on the WAN (egress) and an ifb (ingress); cake when available.
+4. Flowtables offload once the kernel has it (`flowtable` + `flow add @ft` for established flows).
+5. FQDN-based rules: Unbound has no nftset; options are a dnsmasq forwarder with nftset (custom build)
+   or routald reading Unbound's answers (dnstap) and filling nftables sets.
+6. GitOps: CI workflow (render + `--mode try` + health check + confirm), then an on-device pull agent.
+7. Stateful DHCPv6 (`managed: true`, Kea), DHCPv6-PD server for downstream routers, Kea HA.
+8. VRRP for router HA; `routalctl` wrapper (validate, diff, apply) if `talosctl` + `routald` aren't enough.

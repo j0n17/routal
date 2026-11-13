@@ -1,0 +1,23 @@
+---
+# test overlay: a web server on the laptop, forwarded from the WAN (and reflected), and UPnP on the LAN
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: laptop-web
+inLink: wan0
+protocol: tcp
+ports: [8080]
+toAddress: 192.168.1.50
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: wan-to-laptop-web
+from: wan
+to: lan
+protocol: tcp
+ports: [8080]
+destinationSubnets: [192.168.1.50/32]
+---
+apiVersion: v1alpha1
+kind: UPnPConfig
+externalLink: wan0
+internalLinks: [lan0]

@@ -26,6 +26,9 @@ type Config struct {
 	DHCPServers          []DHCPServer
 	DNSServer            *DNSServer
 	RouterAdvertisements []RouterAdvertisement
+	NTPServer            *NTPServer
+	MDNSReflector        *MDNSReflector
+	UPnP                 *UPnP
 }
 
 // LoadFile reads, parses and validates a router config file.
@@ -111,6 +114,12 @@ func (cfg *Config) add(node *yaml.Node) error {
 		cfg.DNSServer = &DNSServer{}
 
 		return decodeStrict(node, cfg.DNSServer)
+	case "NTPServerConfig":
+		return singleton(node, &cfg.NTPServer, header.Kind)
+	case "MDNSReflectorConfig":
+		return singleton(node, &cfg.MDNSReflector, header.Kind)
+	case "UPnPConfig":
+		return singleton(node, &cfg.UPnP, header.Kind)
 	case "FirewallZoneConfig":
 		return appendDoc(node, &cfg.Zones)
 	case "FirewallRuleConfig":
@@ -130,6 +139,16 @@ func (cfg *Config) add(node *yaml.Node) error {
 	default:
 		return fmt.Errorf("unknown kind %q", header.Kind)
 	}
+}
+
+func singleton[T any](node *yaml.Node, dst **T, kind string) error {
+	if *dst != nil {
+		return fmt.Errorf("duplicate %s", kind)
+	}
+
+	*dst = new(T)
+
+	return decodeStrict(node, *dst)
 }
 
 func appendDoc[T any](node *yaml.Node, list *[]T) error {
@@ -214,6 +233,20 @@ func (cfg *Config) applyDefaults() {
 		if cfg.DNSServer.RegisterDHCPLeases == nil {
 			cfg.DNSServer.RegisterDHCPLeases = new(true)
 		}
+	}
+
+	for i := range cfg.PortForwards {
+		if cfg.PortForwards[i].Reflection == nil {
+			cfg.PortForwards[i].Reflection = new(true)
+		}
+	}
+
+	if cfg.NTPServer != nil && len(cfg.NTPServer.Upstreams) == 0 {
+		cfg.NTPServer.Upstreams = []string{"time.cloudflare.com"} // the Talos default
+	}
+
+	if cfg.UPnP != nil && len(cfg.UPnP.ExternalPorts) == 0 {
+		cfg.UPnP.ExternalPorts = []PortRange{{Lo: 1024, Hi: 49151}}
 	}
 
 	for i := range cfg.RouterAdvertisements {

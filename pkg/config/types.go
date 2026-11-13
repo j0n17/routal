@@ -155,12 +155,17 @@ type PortForward struct {
 	ToAddress     netip.Addr     `yaml:"toAddress"`
 	ToPort        uint16         `yaml:"toPort,omitempty"`
 	SourceSubnets []netip.Prefix `yaml:"sourceSubnets,omitempty"`
+	// Reflection (default true) makes the forward work from inside too, when clients use the
+	// router's public address ("NAT loopback" / hairpin NAT).
+	Reflection *bool `yaml:"reflection,omitempty"`
 }
 
 // DHCPServer serves IPv4 leases on a link (kind: DHCPServerConfig).
 type DHCPServer struct {
-	Name         string            `yaml:"name"`
-	Link         string            `yaml:"link"`
+	Name string `yaml:"name"`
+	Link string `yaml:"link"`
+	// Subnet defaults to the router's address on the link that contains rangeStart.
+	Subnet       netip.Prefix      `yaml:"subnet,omitempty"`
 	RangeStart   netip.Addr        `yaml:"rangeStart"`
 	RangeEnd     netip.Addr        `yaml:"rangeEnd"`
 	LeaseTime    time.Duration     `yaml:"leaseTime,omitempty"`
@@ -202,4 +207,29 @@ type RouterAdvertisement struct {
 	Other          bool           `yaml:"other,omitempty"`
 	DNSServers     []netip.Addr   `yaml:"dnsServers,omitempty"`
 	RouterLifetime time.Duration  `yaml:"routerLifetime,omitempty"`
+}
+
+// NTPServer serves time to local networks (kind: NTPServerConfig). It does not set the router's
+// clock (Talos does); it serves the time it tracks from its upstreams.
+type NTPServer struct {
+	ListenLinks []string `yaml:"listenLinks"`
+	Upstreams   []string `yaml:"upstreams,omitempty"`
+}
+
+// MDNSReflector repeats mDNS (Bonjour/Avahi) between links, so that services such as printers,
+// AirPlay or Chromecast are found across VLANs (kind: MDNSReflectorConfig).
+type MDNSReflector struct {
+	Links []string `yaml:"links"`
+}
+
+// UPnP lets devices on the internal links open port forwards themselves, with UPnP IGD, NAT-PMP
+// and PCP (kind: UPnPConfig).
+type UPnP struct {
+	ExternalLink  string   `yaml:"externalLink"`
+	InternalLinks []string `yaml:"internalLinks"`
+	// ExternalPorts limits the ports devices may open (default 1024-49151, which keeps the Talos API
+	// on 50000 out of reach).
+	ExternalPorts []PortRange `yaml:"externalPorts,omitempty"`
+	// InternalSubnets limits the devices allowed to ask (default: any address on the internal links).
+	InternalSubnets []netip.Prefix `yaml:"internalSubnets,omitempty"`
 }

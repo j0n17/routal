@@ -1,0 +1,3 @@
+#!/bin/sh
+# tcp <host> <port> [TCP|TCP6]: first line a TCP server sends, nothing on timeout or refusal
+socat -T2 - "${3:-TCP}:$1:$2,connect-timeout=2" </dev/null 2>/dev/null | head -1

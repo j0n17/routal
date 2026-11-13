@@ -4,9 +4,15 @@ container:
   entrypoint: /usr/local/bin/routald
   args: ["run"]
   mounts:
-    # dnsmasq config and DHCP leases, kept across restarts and reboots
+    # daemon configs, DHCP leases and UPnP mappings, kept across restarts and reboots
     - source: /var/lib/routal
       destination: /var/lib/routal
+      type: bind
+      options: [rbind, rw]
+    # pid files and control sockets (the container rootfs is read-only). Talos creates every mount
+    # source, so a tmpfs mount is not possible; the host's /run is already a tmpfs.
+    - source: /run/routal
+      destination: /run
       type: bind
       options: [rbind, rw]
   security:

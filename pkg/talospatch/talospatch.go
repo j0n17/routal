@@ -2,19 +2,28 @@
 //
 // The patch carries router.yaml to the routald extension (ExtensionServiceConfig) and opens the
 // router ports used by `to: self` rules and port forwards in the Talos ingress firewall
-// (NetworkRuleConfig).
+// (NetworkRuleConfig). Given the current machine config, it also deletes the NetworkRuleConfig
+// documents it generated earlier that the new router config no longer needs.
 package talospatch
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/j0n17/routal/pkg/config"
+	"github.com/j0n17/routal/pkg/nft"
 )
+
+// RulePrefix prefixes the names of the NetworkRuleConfig documents routald generates; documents
+// with this prefix are owned by routald and deleted when no longer needed.
+const RulePrefix = "routal-"
 
 // ServiceName is the extension service name (manifest and ExtensionServiceConfig).
 const ServiceName = "routald"
@@ -57,8 +66,17 @@ type ingressRule struct {
 	Subnet string `yaml:"subnet"`
 }
 
-// Generate returns the Talos patch for a router config file (raw is embedded verbatim).
-func Generate(raw []byte, cfg *config.Config) ([]byte, error) {
+type deleteDoc struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Name       string `yaml:"name"`
+	Patch      string `yaml:"$patch"`
+}
+
+// Generate returns the Talos patch for a router config file (raw is embedded verbatim). current is
+// the machine config the patch will be applied to (multi-document YAML, e.g. from
+// `talosctl get mc -o yaml`); nil skips the cleanup of stale rules.
+func Generate(raw []byte, cfg *config.Config, current []byte) ([]byte, error) {
 	docs := []any{
 		extensionServiceConfig{
 			APIVersion: "v1alpha1",
@@ -77,13 +95,35 @@ func Generate(raw []byte, cfg *config.Config) ([]byte, error) {
 		}
 
 		// the zone's links are enforced by routald's input chain
-		docs = append(docs, ruleFor("routal-"+r.Name, r.Protocol, cfg.RulePorts(r), cfg.RuleSources(r)))
+		docs = append(docs, ruleFor(RulePrefix+r.Name, r.Protocol, cfg.RulePorts(r), cfg.RuleSources(r)))
 	}
 
 	// Talos filters traffic to the router's own addresses in a prerouting chain that runs before
 	// routald's DNAT, so forwarded ports must be opened there too.
 	for _, pf := range cfg.PortForwards {
-		docs = append(docs, ruleFor("routal-pf-"+pf.Name, pf.Protocol, pf.Ports, pf.SourceSubnets))
+		docs = append(docs, ruleFor(RulePrefix+"pf-"+pf.Name, pf.Protocol, pf.Ports, pf.SourceSubnets))
+	}
+
+	// UPnP: miniupnpd on the internal links, and the external range its mappings may use (routald
+	// drops whatever reaches the router itself there).
+	if u := cfg.UPnP; u != nil {
+		docs = append(docs,
+			ruleFor(RulePrefix+"upnp-udp", config.ProtocolUDP, nft.UPnPInternalUDP, u.InternalSubnets),
+			ruleFor(RulePrefix+"upnp-tcp", config.ProtocolTCP, nft.UPnPInternalTCP, u.InternalSubnets),
+			ruleFor(RulePrefix+"upnp-mappings-udp", config.ProtocolUDP, u.ExternalPorts, nil),
+			ruleFor(RulePrefix+"upnp-mappings-tcp", config.ProtocolTCP, u.ExternalPorts, nil),
+		)
+	}
+
+	if current != nil {
+		stale, err := staleRules(current, docs)
+		if err != nil {
+			return nil, fmt.Errorf("reading the current machine config: %w", err)
+		}
+
+		for _, name := range stale {
+			docs = append(docs, deleteDoc{APIVersion: "v1alpha1", Kind: "NetworkRuleConfig", Name: name, Patch: "delete"})
+		}
 	}
 
 	var buf bytes.Buffer
@@ -131,4 +171,55 @@ func ruleFor(name string, proto config.Protocol, ports []config.PortRange, subne
 	}
 
 	return nrc
+}
+
+// staleRules returns the routald-owned NetworkRuleConfig names in current that docs do not keep.
+// current is the machine config documents, or the MachineConfig resource that wraps them
+// (`talosctl get mc -o yaml`).
+func staleRules(current []byte, docs []any) ([]string, error) {
+	var resource struct {
+		Metadata struct {
+			Type string `yaml:"type"`
+		} `yaml:"metadata"`
+		Spec string `yaml:"spec"`
+	}
+
+	if err := yaml.Unmarshal(current, &resource); err == nil && strings.HasPrefix(resource.Metadata.Type, "MachineConfigs.") {
+		current = []byte(resource.Spec)
+	}
+
+	keep := map[string]bool{}
+
+	for _, d := range docs {
+		if n, ok := d.(networkRuleConfig); ok {
+			keep[n.Name] = true
+		}
+	}
+
+	var stale []string
+
+	dec := yaml.NewDecoder(bytes.NewReader(current))
+
+	for {
+		var doc struct {
+			Kind string `yaml:"kind"`
+			Name string `yaml:"name"`
+		}
+
+		if err := dec.Decode(&doc); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+
+			return nil, err
+		}
+
+		if doc.Kind == "NetworkRuleConfig" && strings.HasPrefix(doc.Name, RulePrefix) && !keep[doc.Name] {
+			stale = append(stale, doc.Name)
+		}
+	}
+
+	slices.Sort(stale)
+
+	return slices.Compact(stale), nil
 }

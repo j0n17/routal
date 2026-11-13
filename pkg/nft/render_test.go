@@ -1,10 +1,12 @@
 package nft_test
 
 import (
+	"net/netip"
 	"strings"
 	"testing"
 
 	"github.com/j0n17/routal/pkg/config"
+	"github.com/j0n17/routal/pkg/env"
 	"github.com/j0n17/routal/pkg/nft"
 )
 
@@ -15,13 +17,16 @@ func TestRenderHomeRouter(t *testing.T) {
 	}
 
 	// lan0 is an alias of the kernel interface eth1
-	out := nft.Render(cfg, func(n string) string {
+	e := env.Static()
+	e.Resolve = func(n string) string {
 		if n == "lan0" {
 			return "eth1"
 		}
 
 		return n
-	})
+	}
+
+	out := nft.Render(cfg, e)
 
 	for _, want := range []string{
 		"add table inet routal\ndelete table inet routal\n",
@@ -31,7 +36,8 @@ func TestRenderHomeRouter(t *testing.T) {
 		`iifname { "wan0" } oifname { "eth1" } ip daddr { 192.168.1.10/32 } meta l4proto tcp th dport { 443 } accept comment "wan-to-nas-https"`,
 		`iifname { "eth1" } meta l4proto udp th dport { 53, 67 } accept comment "lan-dns-dhcp"`,
 		`iifname { "eth1" } meta l4proto tcp th dport { 53 } accept comment "lan-dns-tcp"`,
-		"iifname \"lo\" accept\n\t\tmeta l4proto udp th dport { 53, 67 } drop\n\t\tmeta l4proto tcp th dport { 53 } drop\n",
+		"iifname \"lo\" accept\n\t\tmeta l4proto udp th dport { 53, 67, 1900, 5351 } drop\n\t\tmeta l4proto tcp th dport { 53, 5000 } drop\n",
+		`iifname "wan0" meta l4proto udp th dport { 1024-49151 } drop comment "upnp: no mapping"`,
 		`iifname "wan0" meta nfproto ipv4 tcp dport { 443 } dnat ip to 192.168.1.10 comment "nas-https"`,
 		`oifname "wan0" ip saddr { 192.168.1.0/24 } masquerade comment "lan-out"`,
 	} {
@@ -84,7 +90,7 @@ toPort: 5353
 		t.Fatal(err)
 	}
 
-	out := nft.Render(cfg, nil)
+	out := nft.Render(cfg, env.Static())
 
 	for _, want := range []string{
 		"policy accept;",
@@ -138,7 +144,7 @@ portGroups: [web]
 		t.Fatal(err)
 	}
 
-	out := nft.Render(cfg, nil)
+	out := nft.Render(cfg, env.Static())
 
 	for _, want := range []string{
 		"set addr_nas_v4 {\n\t\ttype ipv4_addr; flags interval;\n\t\telements = { 192.168.30.10/32 }\n\t}",
@@ -166,14 +172,14 @@ func TestRenderSelfSharedPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := nft.Render(cfg, nil)
+	out := nft.Render(cfg, env.Static())
 
 	for _, want := range []string{
-		`iifname { "lan0" } meta l4proto udp th dport { 53, 67 } accept comment "lan-dns-dhcp"`,
-		`iifname { "srv0" } meta l4proto udp th dport { 53, 67 } accept comment "servers-dns-dhcp"`,
+		`iifname { "lan0" } meta l4proto udp th dport { 53, 67, 123, 547, 5353 } accept comment "lan-dns-dhcp"`,
+		`iifname { "srv0" } meta l4proto udp th dport { 53, 67, 123, 547, 5353 } accept comment "servers-dns-dhcp"`,
 		`iifname { "wg0" } meta l4proto udp th dport { 53 } accept comment "vpn-dns"`,
 		`iifname { "wan0" } meta l4proto udp th dport { 51820 } accept comment "wireguard"`,
-		"meta l4proto udp th dport { 53, 67, 51820 } drop",
+		"meta l4proto udp th dport { 53, 67, 123, 547, 5353, 51820 } drop",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
@@ -216,7 +222,70 @@ ports: ["8050-8200", 23]
 		t.Fatal(err)
 	}
 
-	if out := nft.Render(cfg, nil); !strings.Contains(out, "meta l4proto tcp th dport { 22-23, 8000-8200 } drop") {
+	if out := nft.Render(cfg, env.Static()); !strings.Contains(out, "meta l4proto tcp th dport { 22-23, 8000-8200 } drop") {
 		t.Errorf("overlapping/adjacent ranges not merged:\n%s", out)
+	}
+}
+
+func TestRenderReflectionAndUPnP(t *testing.T) {
+	cfg, err := config.Load([]byte(`apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: web
+inLink: wan0
+protocol: tcp
+ports: [443]
+toAddress: 192.168.1.10
+toPort: 8443
+---
+apiVersion: v1alpha1
+kind: UPnPConfig
+externalLink: wan0
+internalLinks: [lan0]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := env.Static()
+	e.Addrs = func(link string) []netip.Prefix {
+		if link == "wan0" {
+			return []netip.Prefix{netip.MustParsePrefix("203.0.113.5/24"), netip.MustParsePrefix("fe80::1/64")}
+		}
+
+		return nil
+	}
+
+	out := nft.Render(cfg, e)
+
+	for _, want := range []string{
+		// from the inside, to the public address
+		`iifname != "wan0" ip daddr { 203.0.113.5 } meta nfproto ipv4 tcp dport { 443 } dnat ip to 192.168.1.10:8443 comment "web reflection"`,
+		`iifname != "wan0" ct status dnat ip daddr 192.168.1.10 meta l4proto tcp th dport { 8443 } accept comment "web reflection"`,
+		`iifname != "wan0" ct status dnat ip daddr 192.168.1.10 meta l4proto tcp th dport { 8443 } masquerade comment "web reflection"`,
+		// UPnP
+		`iifname "wan0" oifname { "lan0" } ct status dnat accept comment "upnp"`,
+		"ct state established,related accept\n\t\tiifname { \"lan0\" } meta l4proto udp th dport { 1900, 5351 } accept comment \"upnp\"",
+		`iifname "wan0" meta l4proto tcp th dport { 1024-49151 } drop comment "upnp: no mapping"`,
+		"add table inet routal_upnp\n",
+		"add chain inet routal_upnp prerouting { type nat hook prerouting priority dstnat; policy accept; }",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+
+	// offline: the public address is unknown, so no reflection DNAT
+	if strings.Contains(nft.Render(cfg, env.Static()), "daddr { 203.0.113.5 }") {
+		t.Error("reflection rendered without a known address")
 	}
 }

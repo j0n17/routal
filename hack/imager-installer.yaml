@@ -1,0 +1,17 @@
+# Talos imager profile: installer image with the routald extension (install and upgrade keep it).
+arch: $ARCH
+platform: metal
+secureboot: false
+version: $TALOS_VERSION
+input:
+  kernel:
+    path: /usr/install/$ARCH/vmlinuz
+  initramfs:
+    path: /usr/install/$ARCH/initramfs.xz
+  baseInstaller:
+    imageRef: ghcr.io/siderolabs/installer-base:$TALOS_VERSION
+  systemExtensions:
+    - tarballPath: /out/routald-$ARCH.tar
+output:
+  kind: installer
+  outFormat: raw

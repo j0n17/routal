@@ -84,11 +84,11 @@ to: self
 protocol: udp
 ports: [51820]
 ---
-# DNS and DHCP on the router, from the inside zones only.
+# DNS, DHCP, NTP and mDNS on the router, from the inside zones only.
 apiVersion: v1alpha1
 kind: FirewallPortGroupConfig
 name: dns_dhcp
-ports: [53, 67]
+ports: [53, 67, 123, 547, 5353]
 ---
 apiVersion: v1alpha1
 kind: FirewallRuleConfig
@@ -121,7 +121,7 @@ name: out
 outLink: wan0
 sourceSubnets: [192.168.1.0/24, 192.168.30.0/24, 10.8.0.0/24]
 ---
-# Served by dnsmasq inside the routald extension.
+# Served by Kea inside the routald extension.
 apiVersion: v1alpha1
 kind: DHCPServerConfig
 name: lan
@@ -129,6 +129,10 @@ link: lan0
 rangeStart: 192.168.1.100
 rangeEnd: 192.168.1.200
 domain: home.arpa
+staticLeases:
+  - mac: 52:54:00:00:00:20
+    address: 192.168.1.50
+    hostname: laptop
 ---
 apiVersion: v1alpha1
 kind: DHCPServerConfig
@@ -161,3 +165,13 @@ kind: RouterAdvertisementConfig
 name: servers
 link: srv0
 prefixes: [fd00:30::/64]
+---
+# Time for the inside networks (DHCP advertises the router as NTP server).
+apiVersion: v1alpha1
+kind: NTPServerConfig
+listenLinks: [lan0, srv0]
+---
+# The NAS announces its shares with mDNS; laptops on the LAN find it across the VLAN.
+apiVersion: v1alpha1
+kind: MDNSReflectorConfig
+links: [lan0, srv0]

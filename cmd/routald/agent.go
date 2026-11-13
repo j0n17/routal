@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/j0n17/routal/pkg/config"
+	"github.com/j0n17/routal/pkg/env"
 	"github.com/j0n17/routal/pkg/nft"
+	"github.com/j0n17/routal/pkg/services"
 )
 
 const reconcileInterval = 5 * time.Second
@@ -25,7 +27,9 @@ const reconcileInterval = 5 * time.Second
 type agent struct {
 	configPath string
 	nftBin     string
-	dnsmasq    *dnsmasqSupervisor
+	dirs       services.Dirs
+	services   *supervisor
+	names      *leaseNames
 
 	applied [32]byte
 }
@@ -44,7 +48,7 @@ func (a *agent) run(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
-			a.dnsmasq.stop()
+			a.services.stopAll()
 			log.Printf("routald stopping, rules left in place")
 
 			return nil
@@ -59,21 +63,30 @@ func (a *agent) reconcile() error {
 		return err
 	}
 
-	return errors.Join(a.applyFirewall(cfg), a.dnsmasq.reconcile(cfg))
+	e := env.Host()
+
+	errs := []error{a.applyFirewall(cfg, e)}
+	errs = append(errs, a.services.reconcile(services.Render(cfg, e, a.dirs)))
+	errs = append(errs, a.names.sync(cfg, a.services.generation("unbound")))
+
+	return errors.Join(errs...)
 }
 
 // applyFirewall applies the forwarding sysctls and the nftables ruleset when they changed.
-func (a *agent) applyFirewall(cfg *config.Config) error {
+func (a *agent) applyFirewall(cfg *config.Config, e env.Env) error {
 	var aliases []string
 
-	ruleset := nft.Render(cfg, func(name string) string {
-		kernel := resolveLink(name)
+	resolve := e.Resolve
+	e.Resolve = func(name string) string {
+		kernel := resolve(name)
 		if kernel != name {
 			aliases = append(aliases, name+"="+kernel)
 		}
 
 		return kernel
-	})
+	}
+
+	ruleset := nft.Render(cfg, e)
 
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%v%v\n%s", *cfg.Forwarding.IPv4, *cfg.Forwarding.IPv6, ruleset)))
 	if sum == a.applied {
@@ -117,26 +130,4 @@ func setSysctl(name string, on bool) error {
 	}
 
 	return os.WriteFile(filepath.Join("/proc/sys", name), []byte(v), 0o644)
-}
-
-// resolveLink maps a Talos link alias (set by LinkAliasConfig as the kernel ifalias) to the kernel
-// interface name; names that are not aliases are returned unchanged.
-func resolveLink(name string) string {
-	if _, err := os.Stat(filepath.Join("/sys/class/net", name)); err == nil {
-		return name
-	}
-
-	entries, err := os.ReadDir("/sys/class/net")
-	if err != nil {
-		return name
-	}
-
-	for _, e := range entries {
-		alias, err := os.ReadFile(filepath.Join("/sys/class/net", e.Name(), "ifalias"))
-		if err == nil && strings.TrimSpace(string(alias)) == name {
-			return e.Name()
-		}
-	}
-
-	return name
 }

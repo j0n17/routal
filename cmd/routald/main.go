@@ -3,8 +3,8 @@
 //	routald run [-config /etc/routal/router.yaml]   apply and keep reconciling (extension entrypoint)
 //	routald validate <router.yaml>                    check a config
 //	routald render <router.yaml>                      print the nftables ruleset
-//	routald render-dnsmasq <router.yaml>              print the dnsmasq config (DHCP, DNS, RA)
-//	routald talos-patch <router.yaml>                 print the Talos machine config patch
+//	routald render-services <router.yaml> <dir>       write the daemon configs (Kea, Unbound, radvd...) to dir
+//	routald talos-patch [-current mc.yaml] <router.yaml>  print the Talos machine config patch
 package main
 
 import (
@@ -13,11 +13,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/j0n17/routal/pkg/config"
-	"github.com/j0n17/routal/pkg/dnsmasq"
+	"github.com/j0n17/routal/pkg/env"
 	"github.com/j0n17/routal/pkg/nft"
+	"github.com/j0n17/routal/pkg/services"
 	"github.com/j0n17/routal/pkg/talospatch"
 )
 
@@ -29,7 +31,7 @@ func main() {
 }
 
 func usage() error {
-	return fmt.Errorf("usage: routald run|validate|render|render-dnsmasq|talos-patch [args]")
+	return fmt.Errorf("usage: routald run|validate|render|render-services|talos-patch [args]")
 }
 
 func run(args []string) error {
@@ -43,18 +45,49 @@ func run(args []string) error {
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		path := fs.String("config", talospatch.ConfigPath, "router config file")
 		nftBin := fs.String("nft", "/usr/sbin/nft", "nft binary (extension services run with an empty PATH)")
-		dnsmasqBin := fs.String("dnsmasq", "/usr/sbin/dnsmasq", "dnsmasq binary")
-		stateDir := fs.String("state-dir", "/var/lib/routal", "persistent directory (dnsmasq config and leases)")
+		stateDir := fs.String("state-dir", services.DefaultDirs.State, "persistent directory (daemon configs, leases)")
+		runDir := fs.String("run-dir", services.DefaultDirs.Run, "volatile directory (pid files, control sockets)")
 		_ = fs.Parse(args)
 
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 
+		dirs := services.Dirs{State: *stateDir, Run: *runDir}
+
 		return (&agent{
 			configPath: *path,
 			nftBin:     *nftBin,
-			dnsmasq:    &dnsmasqSupervisor{bin: *dnsmasqBin, stateDir: *stateDir},
+			dirs:       dirs,
+			services:   newSupervisor(dirs),
+			names:      &leaseNames{ctl: "/usr/sbin/unbound-control", dirs: dirs},
 		}).run(ctx)
+	}
+
+	var (
+		current []byte
+		outDir  string
+	)
+
+	if cmd == "talos-patch" {
+		fs := flag.NewFlagSet("talos-patch", flag.ExitOnError)
+		currentPath := fs.String("current", "", "current machine config (`talosctl get mc -o yaml`), to delete the rules it no longer needs")
+		_ = fs.Parse(args)
+		args = fs.Args()
+
+		if *currentPath != "" {
+			var err error
+			if current, err = os.ReadFile(*currentPath); err != nil {
+				return err
+			}
+		}
+	}
+
+	if cmd == "render-services" {
+		if len(args) != 2 {
+			return usage()
+		}
+
+		args, outDir = args[:1], args[1]
 	}
 
 	if len(args) != 1 {
@@ -75,11 +108,22 @@ func run(args []string) error {
 	case "validate":
 		fmt.Printf("%s is valid\n", args[0])
 	case "render":
-		fmt.Print(nft.Render(cfg, nil))
-	case "render-dnsmasq":
-		fmt.Print(dnsmasq.Render(cfg, nil, "/var/lib/routal/dnsmasq.leases"))
+		fmt.Print(nft.Render(cfg, env.Static()))
+	case "render-services":
+		dir := outDir
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+
+		for _, svc := range services.Render(cfg, env.Static(), services.DefaultDirs) {
+			if err := os.WriteFile(filepath.Join(dir, svc.File), []byte(svc.Config), 0o644); err != nil {
+				return err
+			}
+
+			fmt.Printf("%s: %s\n", svc.Name, filepath.Join(dir, svc.File))
+		}
 	case "talos-patch":
-		out, err := talospatch.Generate(raw, cfg)
+		out, err := talospatch.Generate(raw, cfg, current)
 		if err != nil {
 			return err
 		}

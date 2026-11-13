@@ -82,3 +82,9 @@ kind: DNSServerConfig
 listenLinks: [lan0]
 upstreams: [9.9.9.9, 149.112.112.112]
 localDomain: home.arpa
+---
+# Consoles and games open their own port forwards (UPnP IGD, NAT-PMP, PCP), to their own address only.
+apiVersion: v1alpha1
+kind: UPnPConfig
+externalLink: wan0
+internalLinks: [lan0]

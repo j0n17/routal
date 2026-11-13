@@ -12,21 +12,25 @@ import (
 	"strings"
 
 	"github.com/j0n17/routal/pkg/config"
+	"github.com/j0n17/routal/pkg/env"
 )
 
 // Table is the nftables table owned by routald.
 const Table = "routal"
 
-// LinkResolver maps a configured link name (kernel name or Talos link alias) to kernel names.
-type LinkResolver func(name string) string
+// UPnPTable holds the mappings miniupnpd adds (UPnPConfig).
+const UPnPTable = "routal_upnp"
 
-// Render returns an nft script that atomically replaces the routal table.
-func Render(cfg *config.Config, resolve LinkResolver) string {
-	if resolve == nil {
-		resolve = func(name string) string { return name }
-	}
+// UPnP ports miniupnpd listens on, on the internal links (SSDP, IGD HTTP, NAT-PMP/PCP).
+var (
+	UPnPInternalUDP = []config.PortRange{{Lo: 1900, Hi: 1900}, {Lo: 5351, Hi: 5351}}
+	UPnPInternalTCP = []config.PortRange{{Lo: 5000, Hi: 5000}}
+)
 
-	r := renderer{cfg: cfg, resolve: resolve}
+// Render returns an nft script that atomically replaces the routal table. Link addresses from e
+// are used for port forward reflection (the router's public address).
+func Render(cfg *config.Config, e env.Env) string {
+	r := renderer{cfg: cfg, resolve: e.Resolve, env: e}
 
 	var b strings.Builder
 
@@ -40,12 +44,28 @@ func Render(cfg *config.Config, resolve LinkResolver) string {
 	r.postrouting(&b)
 	b.WriteString("}\n")
 
+	// miniupnpd adds its mappings to its own table, which routald creates and never flushes
+	fmt.Fprintf(&b, "\nadd table inet %s\n", UPnPTable)
+
+	if r.cfg.UPnP != nil {
+		for _, c := range []string{
+			"forward { type filter hook forward priority filter; policy accept; }",
+			"prerouting { type nat hook prerouting priority dstnat; policy accept; }",
+			"postrouting { type nat hook postrouting priority srcnat; policy accept; }",
+		} {
+			fmt.Fprintf(&b, "add chain inet %s %s\n", UPnPTable, c)
+		}
+	} else {
+		fmt.Fprintf(&b, "delete table inet %s\n", UPnPTable)
+	}
+
 	return b.String()
 }
 
 type renderer struct {
 	cfg     *config.Config
-	resolve LinkResolver
+	resolve func(string) string
+	env     env.Env
 }
 
 func (r renderer) links(names []string) string {
@@ -67,7 +87,23 @@ func (r renderer) input(b *strings.Builder) {
 
 	selfPorts := map[config.Protocol][]config.PortRange{}
 
-	var protos []config.Protocol
+	var (
+		protos  []config.Protocol
+		accepts strings.Builder
+	)
+
+	accept := func(links []string, proto config.Protocol, pr []config.PortRange, comment string) {
+		if len(selfPorts[proto]) == 0 {
+			protos = append(protos, proto)
+		}
+
+		selfPorts[proto] = append(selfPorts[proto], pr...)
+
+		if len(links) > 0 {
+			fmt.Fprintf(&accepts, "\t\tiifname %s meta l4proto %s th dport %s accept comment %q\n",
+				r.links(links), l4proto(proto), ports(mergeRanges(pr)), comment)
+		}
+	}
 
 	for _, rule := range r.cfg.Rules {
 		rulePorts := r.cfg.RulePorts(rule)
@@ -75,22 +111,40 @@ func (r renderer) input(b *strings.Builder) {
 			continue
 		}
 
-		if len(selfPorts[rule.Protocol]) == 0 {
-			protos = append(protos, rule.Protocol)
-		}
-
-		selfPorts[rule.Protocol] = append(selfPorts[rule.Protocol], rulePorts...)
-
-		fmt.Fprintf(b, "\t\tiifname %s meta l4proto %s th dport %s accept comment %q\n",
-			r.links(r.cfg.ZoneLinks(rule.From)), l4proto(rule.Protocol), ports(mergeRanges(rulePorts)), rule.Name)
+		accept(r.cfg.ZoneLinks(rule.From), rule.Protocol, rulePorts, rule.Name)
 	}
 
-	if len(protos) > 0 {
+	// UPnP: miniupnpd's ports on the internal links; the external port range is opened in Talos so
+	// that mappings work, and anything that reaches the router itself on it (no mapping) is dropped.
+	if u := r.cfg.UPnP; u != nil {
+		accept(u.InternalLinks, config.ProtocolUDP, UPnPInternalUDP, "upnp")
+		accept(u.InternalLinks, config.ProtocolTCP, UPnPInternalTCP, "upnp")
+	}
+
+	var upnpDrops []string
+
+	if u := r.cfg.UPnP; u != nil {
+		// only on the external link: router daemons use ephemeral ports in this range for replies
+		// conntrack cannot match (e.g. unicast answers to the mDNS reflector's multicast queries)
+		for _, p := range []config.Protocol{config.ProtocolTCP, config.ProtocolUDP} {
+			upnpDrops = append(upnpDrops, fmt.Sprintf("\t\tiifname %q meta l4proto %s th dport %s drop comment \"upnp: no mapping\"\n",
+				r.resolve(u.ExternalLink), p, ports(mergeRanges(u.ExternalPorts))))
+		}
+	}
+
+	if len(protos) > 0 || len(upnpDrops) > 0 {
+		// replies to the router's own connections may use any port
+		b.WriteString("\t\tct state established,related accept\n")
+		b.WriteString(accepts.String())
 		b.WriteString("\t\tiifname \"lo\" accept\n")
 	}
 
 	for _, p := range protos {
 		fmt.Fprintf(b, "\t\tmeta l4proto %s th dport %s drop\n", l4proto(p), ports(mergeRanges(selfPorts[p])))
+	}
+
+	for _, d := range upnpDrops {
+		b.WriteString(d)
 	}
 
 	b.WriteString("\t}\n")
@@ -122,6 +176,19 @@ func (r renderer) forward(b *strings.Builder) {
 
 	fmt.Fprintf(b, "\tchain forward {\n\t\ttype filter hook forward priority filter; policy %s;\n", verdict(fw.ForwardDefault))
 	b.WriteString("\t\tct state established,related accept\n\t\tct state invalid drop\n")
+
+	// UPnP mappings are DNAT rules miniupnpd adds in its own table; accept what they translated.
+	if u := r.cfg.UPnP; u != nil {
+		fmt.Fprintf(b, "\t\tiifname %q oifname %s ct status dnat accept comment \"upnp\"\n", r.resolve(u.ExternalLink), r.links(u.InternalLinks))
+	}
+
+	// Reflected port forwards are accepted from any link but the forward's own.
+	for _, pf := range r.cfg.PortForwards {
+		if *pf.Reflection {
+			fmt.Fprintf(b, "\t\tiifname != %q ct status dnat %s daddr %s meta l4proto %s th dport %s accept comment %q\n",
+				r.resolve(pf.InLink), pfFamily(pf), pf.ToAddress, pf.Protocol, ports(pfTargetPorts(pf)), pf.Name+" reflection")
+		}
+	}
 
 	for _, rule := range r.cfg.Rules {
 		if rule.To == config.SelfZone {
@@ -303,18 +370,16 @@ func (r renderer) prerouting(b *strings.Builder) {
 	b.WriteString("\tchain prerouting {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n")
 
 	for _, pf := range r.cfg.PortForwards {
-		fam := "ip"
+		fam := pfFamily(pf)
 		target := pf.ToAddress.String()
 
-		if pf.ToAddress.Is6() {
-			fam, target = "ip6", "["+target+"]"
+		if fam == "ip6" {
+			target = "[" + target + "]"
 		}
 
 		if pf.ToPort != 0 {
 			target += fmt.Sprintf(":%d", pf.ToPort)
 		}
-
-		m := []string{fmt.Sprintf("iifname %q", r.resolve(pf.InLink))}
 
 		var src []netip.Prefix
 
@@ -328,13 +393,52 @@ func (r renderer) prerouting(b *strings.Builder) {
 			continue // no source subnet of the target's family
 		}
 
-		m = append(m, family(fam).match("saddr", src)...)
-		m = append(m, fmt.Sprintf("meta nfproto %s %s dport %s", map[string]string{"ip": "ipv4", "ip6": "ipv6"}[fam], pf.Protocol, ports(pf.Ports)))
-		m = append(m, fmt.Sprintf("dnat %s to %s", fam, target), fmt.Sprintf("comment %q", pf.Name))
-		fmt.Fprintf(b, "\t\t%s\n", strings.Join(m, " "))
+		match := fmt.Sprintf("meta nfproto %s %s dport %s", map[family]string{"ip": "ipv4", "ip6": "ipv6"}[fam], pf.Protocol, ports(pf.Ports))
+		action := []string{fmt.Sprintf("dnat %s to %s", fam, target), fmt.Sprintf("comment %q", pf.Name)}
+
+		m := []string{fmt.Sprintf("iifname %q", r.resolve(pf.InLink))}
+		m = append(m, fam.match("saddr", src)...)
+		m = append(m, match)
+		fmt.Fprintf(b, "\t\t%s\n", strings.Join(append(m, action...), " "))
+
+		// reflection: from the inside, to the router's address on the forward's link
+		if *pf.Reflection {
+			var public []string
+
+			for _, a := range r.env.Addrs(pf.InLink) {
+				if a.Addr().Is4() == pf.ToAddress.Is4() && !a.Addr().IsLinkLocalUnicast() {
+					public = append(public, a.Addr().String())
+				}
+			}
+
+			if len(public) == 0 {
+				continue // address not known yet (offline render, or DHCP pending): re-rendered when it is
+			}
+
+			action[1] = fmt.Sprintf("comment %q", pf.Name+" reflection")
+			fmt.Fprintf(b, "\t\tiifname != %q %s daddr { %s } %s %s\n",
+				r.resolve(pf.InLink), fam, strings.Join(public, ", "), match, strings.Join(action, " "))
+		}
 	}
 
 	b.WriteString("\t}\n")
+}
+
+func pfFamily(pf config.PortForward) family {
+	if pf.ToAddress.Is6() {
+		return "ip6"
+	}
+
+	return "ip"
+}
+
+// pfTargetPorts returns the destination ports after DNAT.
+func pfTargetPorts(pf config.PortForward) []config.PortRange {
+	if pf.ToPort != 0 {
+		return []config.PortRange{{Lo: pf.ToPort, Hi: pf.ToPort}}
+	}
+
+	return pf.Ports
 }
 
 func (r renderer) postrouting(b *strings.Builder) {
@@ -368,6 +472,15 @@ func (r renderer) postrouting(b *strings.Builder) {
 			parts = append(parts, fam.match("saddr", m.SourceSubnets)...)
 			parts = append(parts, action, fmt.Sprintf("comment %q", m.Name))
 			fmt.Fprintf(b, "\t\t%s\n", strings.Join(parts, " "))
+		}
+	}
+
+	// Reflected connections come from the inside: without SNAT the server would answer the client
+	// directly, from an address the client did not connect to.
+	for _, pf := range r.cfg.PortForwards {
+		if *pf.Reflection {
+			fmt.Fprintf(b, "\t\tiifname != %q ct status dnat %s daddr %s meta l4proto %s th dport %s masquerade comment %q\n",
+				r.resolve(pf.InLink), pfFamily(pf), pf.ToAddress, pf.Protocol, ports(pfTargetPorts(pf)), pf.Name+" reflection")
 		}
 	}
 

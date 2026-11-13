@@ -1,0 +1,5 @@
+#!/bin/sh
+# mdns-a <name> <label-count...>: legacy unicast mDNS query for "nas.local" A; prints the answer bytes.
+# (dig rejects answers that do not come from 224.0.0.251, which is how a reflector answers.)
+printf '\022\064\000\000\000\001\000\000\000\000\000\000\003nas\005local\000\000\001\000\001' |
+	socat -T3 - UDP4-DATAGRAM:224.0.0.251:5353 2>/dev/null | od -An -tx1 | tr -d '\n'
