@@ -1,0 +1,77 @@
+# Talos side: WAN, LAN, a "servers" VLAN for the NAS, and WireGuard remote access. Dual stack.
+apiVersion: v1alpha1
+kind: HostnameConfig
+auto: "off"
+hostname: home-router
+---
+apiVersion: v1alpha1
+kind: LinkAliasConfig
+name: wan0
+selector:
+  match: mac(link.permanent_addr) == "52:54:00:00:00:01"
+---
+apiVersion: v1alpha1
+kind: LinkAliasConfig
+name: lan0
+selector:
+  match: mac(link.permanent_addr) == "52:54:00:00:00:02"
+---
+apiVersion: v1alpha1
+kind: DHCPv4Config
+name: wan0
+---
+# IPv6 on the WAN would normally come from the ISP; a static ULA keeps the example self-contained.
+apiVersion: v1alpha1
+kind: LinkConfig
+name: wan0
+up: true
+addresses:
+  - address: fd00:64::1/64
+---
+apiVersion: v1alpha1
+kind: LinkConfig
+name: lan0
+up: true
+addresses:
+  - address: 192.168.1.1/24
+  - address: fd00:1::1/64
+---
+# The NAS lives on its own VLAN so that every access to it goes through the firewall.
+apiVersion: v1alpha1
+kind: VLANConfig
+name: srv0
+vlanID: 30
+parent: lan0
+up: true
+addresses:
+  - address: 192.168.30.1/24
+  - address: fd00:30::1/64
+---
+apiVersion: v1alpha1
+kind: WireguardConfig
+name: wg0
+privateKey: GA1E1VB+g41Dl0+UH2TMW9C5953y+moVg6JIIqkJbmw= # replace me
+listenPort: 51820
+peers:
+  - publicKey: 735jkJdcVDninU5PzLJ/S+bfN6Q3QOk6svWrVLMJQAk= # the laptop on the road
+    allowedIPs:
+      - 10.8.0.2/32
+      - fd00:8::2/128
+up: true
+addresses:
+  - address: 10.8.0.1/24
+  - address: fd00:8::1/64
+---
+apiVersion: v1alpha1
+kind: NetworkDefaultActionConfig
+ingress: block
+---
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: talos-api
+portSelector:
+  ports: [50000]
+  protocol: tcp
+ingress:
+  - subnet: 192.168.1.0/24
+  - subnet: fd00:1::/64

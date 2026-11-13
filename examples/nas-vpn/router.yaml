@@ -1,0 +1,81 @@
+# A NAS reachable from the LAN and over WireGuard, never from the Internet. IPv4 and IPv6.
+apiVersion: v1alpha1
+kind: FirewallConfig
+logBlocked: true
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: servers
+links: [srv0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: vpn
+links: [wg0]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-to-wan
+from: lan
+to: wan
+---
+# The NAS can fetch updates.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: servers-to-wan
+from: servers
+to: wan
+---
+# NAS web UI (443) from the LAN and from the VPN, both address families. Nothing else on the NAS.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-to-nas
+from: lan
+to: servers
+protocol: tcp
+ports: [443]
+destinationSubnets: [192.168.30.10/32, fd00:30::10/128]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: vpn-to-nas
+from: vpn
+to: servers
+protocol: tcp
+ports: [443]
+destinationSubnets: [192.168.30.10/32, fd00:30::10/128]
+---
+# Already blocked by the default policy; explicit so that attempts are logged under their own name.
+# This matters for IPv6, where the NAS address is routable and there is no NAT in the way.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: wan-to-servers
+from: wan
+to: servers
+action: block
+log: true
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: wireguard
+from: wan
+to: self
+protocol: udp
+ports: [51820]
+---
+# IPv4 only: IPv6 is routed without NAT.
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: out
+outLink: wan0
+sourceSubnets: [192.168.1.0/24, 192.168.30.0/24, 10.8.0.0/24]

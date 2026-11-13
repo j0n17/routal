@@ -54,6 +54,20 @@ the LAN only. Both use the unmodified `examples/home-router` files; the MACs mat
   on the Mac, cannot reach 192.168.1.10 on its own. Through wg0 (zone `vpn`, rule `vpn-to-lan`, rule
   `wan -> self udp 51820`), it gets the NAS's answer and ping works. Without `vpn-to-lan` the tunnel still
   comes up but the NAS is blocked.
+- NAS scenario (`examples/nas-vpn`, unmodified except the WireGuard keys), dual stack. The NAS sits on VLAN
+  30 (zone `servers`). There is a LAN laptop VM, a WAN host VM with real routes to the NAS networks via
+  the router, and a WireGuard peer. Results:
+
+  | from | NAS v4:443 | NAS v6:443 | NAS v4:8080 | NAS v6:8080 |
+  |---|---|---|---|---|
+  | LAN laptop | OK | OK | blocked | blocked |
+  | VPN peer | OK | OK | blocked | blocked |
+  | VPN peer, tunnel down | blocked | blocked | - | - |
+  | WAN host | blocked | blocked | blocked | blocked |
+
+  WAN attempts show up in the router's kernel log as `routal wan-to-servers: IN=enp0s1 OUT=srv0 ...` for
+  both families, so they reach the router and the rule drops them.
+  In the test only, the VLAN MTU is 1496: the macOS virtual switch drops 1518-byte tagged frames.
 - How to reproduce: create the VMs with UTM AppleScript (`make new virtual machine`, QEMU backend,
   `network interfaces: {{mode:shared, address:"52:54:00:00:00:01"}, {mode:host, address:"52:54:00:00:00:02"}}`).
   Use an 8 GiB qcow2 converted from `make image`.
