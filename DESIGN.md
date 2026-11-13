@@ -39,8 +39,20 @@ Real-traffic tests (Mac as the WAN-side client, arm64 VM):
   Talos reverted at 60 s and the API came back on its own.
 - Port forward router:8080 -> Mac:8000: the page was served, and the Mac saw the request coming from
   the router (DNAT + forward + SNAT). Without the forward rule, the default policy blocks the request.
-- Not tested: a client behind the router. tart's shared network isolates VMs from each other and drops
-  802.1Q frames; this test needs Softnet with `--net-softnet-allow` or bridged networking.
+- tart's shared network isolates VMs from each other and drops 802.1Q frames, so the client-behind-router
+  test runs on UTM instead.
+
+Full topology on UTM (QEMU, arm64): router with WAN (shared) and LAN (host-only) NICs, and a client on
+the LAN only. Both use the unmodified `examples/home-router` files; the MACs match its LinkAliasConfigs.
+- The aliases resolve (`lan0=enp0s2 wan0=enp0s1`), and the client reaches the Internet only through the
+  router. A capture shows `192.168.1.10:37668` on the LAN leaving the WAN as `192.168.64.41:37668`
+  (masquerade).
+- Port forward `nas-https`: `nc <router WAN> 443` from the Mac gets the client's answer.
+- Removing `lan-to-wan` with `--mode try`: the client lost the Internet after about 13 s and got it back
+  when Talos reverted at 60 s.
+- How to reproduce: create the VMs with UTM AppleScript (`make new virtual machine`, QEMU backend,
+  `network interfaces: {{mode:shared, address:"52:54:00:00:00:01"}, {mode:host, address:"52:54:00:00:00:02"}}`).
+  Use an 8 GiB qcow2 converted from `make image`.
 
 ## Next
 1. DHCP server + DNS (embed Go libs vs. bundle dnsmasq in the extension) + RA.
