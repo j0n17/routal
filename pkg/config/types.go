@@ -117,7 +117,24 @@ type FirewallRule struct {
 	Ports              []PortRange    `yaml:"ports,omitempty"`
 	SourceSubnets      []netip.Prefix `yaml:"sourceSubnets,omitempty"`
 	DestinationSubnets []netip.Prefix `yaml:"destinationSubnets,omitempty"`
-	Log                bool           `yaml:"log,omitempty"`
+	// SourceGroups, DestinationGroups and PortGroups reference FirewallAddressGroupConfig and
+	// FirewallPortGroupConfig documents; they replace the literal lists in the same direction.
+	SourceGroups      []string `yaml:"sourceGroups,omitempty"`
+	DestinationGroups []string `yaml:"destinationGroups,omitempty"`
+	PortGroups        []string `yaml:"portGroups,omitempty"`
+	Log               bool     `yaml:"log,omitempty"`
+}
+
+// AddressGroup is a named set of subnets, IPv4 and/or IPv6 (kind: FirewallAddressGroupConfig).
+type AddressGroup struct {
+	Name    string         `yaml:"name"`
+	Subnets []netip.Prefix `yaml:"subnets"`
+}
+
+// PortGroup is a named set of ports (kind: FirewallPortGroupConfig); the rule sets the protocol.
+type PortGroup struct {
+	Name  string      `yaml:"name"`
+	Ports []PortRange `yaml:"ports"`
 }
 
 // Masquerade source-NATs traffic leaving a link (kind: MasqueradeConfig).

@@ -33,6 +33,7 @@ func Render(cfg *config.Config, resolve LinkResolver) string {
 	// "add" makes the delete succeed when the table does not exist yet; the whole script is one transaction.
 	fmt.Fprintf(&b, "add table inet %s\ndelete table inet %s\n\n", Table, Table)
 	fmt.Fprintf(&b, "table inet %s {\n", Table)
+	r.sets(&b)
 	r.input(&b)
 	r.forward(&b)
 	r.prerouting(&b)
@@ -70,11 +71,12 @@ func (r renderer) input(b *strings.Builder) {
 	var order []key
 
 	for _, rule := range r.cfg.Rules {
-		if rule.To != config.SelfZone || rule.Action != config.ActionAccept || len(rule.Ports) == 0 {
+		rulePorts := r.cfg.RulePorts(rule)
+		if rule.To != config.SelfZone || rule.Action != config.ActionAccept || len(rulePorts) == 0 {
 			continue
 		}
 
-		k := key{rule.Protocol, ports(rule.Ports)}
+		k := key{rule.Protocol, ports(rulePorts)}
 		if _, ok := allowed[k]; !ok {
 			order = append(order, k)
 		}
@@ -105,20 +107,34 @@ func (r renderer) forward(b *strings.Builder) {
 
 		head := fmt.Sprintf("iifname %s oifname %s", r.links(r.cfg.ZoneLinks(rule.From)), r.links(r.cfg.ZoneLinks(rule.To)))
 
-		for _, fam := range families(rule.SourceSubnets, rule.DestinationSubnets) {
-			var m []string
+		tail := []string{}
+		if rule.Log {
+			tail = append(tail, fmt.Sprintf("log prefix %q", "routal "+rule.Name+": "))
+		}
 
-			m = append(m, head)
-			m = append(m, fam.match("saddr", rule.SourceSubnets)...)
-			m = append(m, fam.match("daddr", rule.DestinationSubnets)...)
-			m = append(m, protoMatch(rule.Protocol, rule.Ports)...)
+		tail = append(tail, verdict(rule.Action), fmt.Sprintf("comment %q", rule.Name))
 
-			if rule.Log {
-				m = append(m, fmt.Sprintf("log prefix %q", "routal "+rule.Name+": "))
+		// one nft rule per combination of source/destination/port selector and address family
+		for _, src := range r.addrSels(rule.SourceSubnets, rule.SourceGroups) {
+			for _, dst := range r.addrSels(rule.DestinationSubnets, rule.DestinationGroups) {
+				for _, port := range portSels(rule.Ports, rule.PortGroups) {
+					for _, fam := range selFamilies(src, dst) {
+						m := []string{head}
+						m = append(m, src.match(fam, "saddr")...)
+						m = append(m, dst.match(fam, "daddr")...)
+
+						switch {
+						case rule.Protocol == "":
+						case port == "":
+							m = append(m, "meta l4proto "+l4proto(rule.Protocol))
+						default:
+							m = append(m, fmt.Sprintf("meta l4proto %s th dport %s", l4proto(rule.Protocol), port))
+						}
+
+						fmt.Fprintf(b, "\t\t%s\n", strings.Join(append(m, tail...), " "))
+					}
+				}
 			}
-
-			m = append(m, verdict(rule.Action), fmt.Sprintf("comment %q", rule.Name))
-			fmt.Fprintf(b, "\t\t%s\n", strings.Join(m, " "))
 		}
 	}
 
@@ -127,6 +143,137 @@ func (r renderer) forward(b *strings.Builder) {
 	}
 
 	b.WriteString("\t}\n")
+}
+
+// sets declares one named set per address group and family, and one per port group.
+func (r renderer) sets(b *strings.Builder) {
+	for _, g := range r.cfg.AddressGroups {
+		sel := groupSel(g)
+
+		for _, f := range []struct{ name, typ, elems string }{{"v4", "ipv4_addr", sel.v4lit}, {"v6", "ipv6_addr", sel.v6lit}} {
+			if f.elems != "" {
+				fmt.Fprintf(b, "\tset addr_%s_%s {\n\t\ttype %s; flags interval;\n\t\telements = %s\n\t}\n", g.Name, f.name, f.typ, f.elems)
+			}
+		}
+	}
+
+	for _, g := range r.cfg.PortGroups {
+		fmt.Fprintf(b, "\tset port_%s {\n\t\ttype inet_service; flags interval;\n\t\telements = %s\n\t}\n", g.Name, ports(g.Ports))
+	}
+}
+
+// addrSel matches an address list: the v4/v6 expressions are an anonymous set or a named set
+// reference, empty when the list has no address of that family. A nil *addrSel matches anything.
+type addrSel struct {
+	v4, v6       string
+	v4lit, v6lit string
+}
+
+func literalSel(prefixes []netip.Prefix) *addrSel {
+	var v4, v6 []string
+
+	for _, p := range prefixes {
+		if p.Addr().Is4() {
+			v4 = append(v4, p.String())
+		} else {
+			v6 = append(v6, p.String())
+		}
+	}
+
+	sel := &addrSel{}
+	if len(v4) > 0 {
+		sel.v4lit = "{ " + strings.Join(v4, ", ") + " }"
+	}
+
+	if len(v6) > 0 {
+		sel.v6lit = "{ " + strings.Join(v6, ", ") + " }"
+	}
+
+	sel.v4, sel.v6 = sel.v4lit, sel.v6lit
+
+	return sel
+}
+
+func groupSel(g config.AddressGroup) *addrSel {
+	sel := literalSel(g.Subnets)
+
+	if sel.v4 != "" {
+		sel.v4 = "@addr_" + g.Name + "_v4"
+	}
+
+	if sel.v6 != "" {
+		sel.v6 = "@addr_" + g.Name + "_v6"
+	}
+
+	return sel
+}
+
+func (r renderer) addrSels(literal []netip.Prefix, groups []string) []*addrSel {
+	switch {
+	case len(groups) > 0:
+		sels := make([]*addrSel, 0, len(groups))
+
+		for _, name := range groups {
+			if g, ok := r.cfg.AddressGroup(name); ok {
+				sels = append(sels, groupSel(g))
+			}
+		}
+
+		return sels
+	case len(literal) > 0:
+		return []*addrSel{literalSel(literal)}
+	default:
+		return []*addrSel{nil}
+	}
+}
+
+func (s *addrSel) match(fam family, dir string) []string {
+	if s == nil || fam == "" {
+		return nil
+	}
+
+	expr := s.v4
+	if fam == "ip6" {
+		expr = s.v6
+	}
+
+	return []string{fmt.Sprintf("%s %s %s", fam, dir, expr)}
+}
+
+// selFamilies returns the families a source/destination pair can match together.
+func selFamilies(src, dst *addrSel) []family {
+	if src == nil && dst == nil {
+		return []family{""}
+	}
+
+	var out []family
+
+	if (src == nil || src.v4 != "") && (dst == nil || dst.v4 != "") {
+		out = append(out, "ip")
+	}
+
+	if (src == nil || src.v6 != "") && (dst == nil || dst.v6 != "") {
+		out = append(out, "ip6")
+	}
+
+	return out
+}
+
+// portSels returns the port expressions of a rule: one per port group, the literal set, or "" (any).
+func portSels(literal []config.PortRange, groups []string) []string {
+	switch {
+	case len(groups) > 0:
+		sels := make([]string, 0, len(groups))
+		for _, g := range groups {
+			sels = append(sels, "@port_"+g)
+		}
+
+		return sels
+	case len(literal) > 0:
+		return []string{ports(literal)}
+	default:
+		return []string{""}
+	}
 }
 
 func (r renderer) prerouting(b *strings.Builder) {
@@ -243,17 +390,6 @@ func families(src, dst []netip.Prefix) []family {
 	}
 
 	return out
-}
-
-func protoMatch(proto config.Protocol, pr []config.PortRange) []string {
-	switch {
-	case proto == "":
-		return nil
-	case len(pr) > 0:
-		return []string{fmt.Sprintf("meta l4proto %s th dport %s", l4proto(proto), ports(pr))}
-	default:
-		return []string{"meta l4proto " + l4proto(proto)}
-	}
 }
 
 func l4proto(p config.Protocol) string {

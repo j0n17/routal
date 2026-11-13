@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
+	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -17,6 +19,8 @@ type Config struct {
 	Firewall             *Firewall
 	Zones                []FirewallZone
 	Rules                []FirewallRule
+	AddressGroups        []AddressGroup
+	PortGroups           []PortGroup
 	Masquerades          []Masquerade
 	PortForwards         []PortForward
 	DHCPServers          []DHCPServer
@@ -111,6 +115,10 @@ func (cfg *Config) add(node *yaml.Node) error {
 		return appendDoc(node, &cfg.Zones)
 	case "FirewallRuleConfig":
 		return appendDoc(node, &cfg.Rules)
+	case "FirewallAddressGroupConfig":
+		return appendDoc(node, &cfg.AddressGroups)
+	case "FirewallPortGroupConfig":
+		return appendDoc(node, &cfg.PortGroups)
 	case "MasqueradeConfig":
 		return appendDoc(node, &cfg.Masquerades)
 	case "PortForwardConfig":
@@ -224,4 +232,43 @@ func (cfg *Config) ZoneLinks(zone string) []string {
 	}
 
 	return nil
+}
+
+// AddressGroup returns the address group with the given name.
+func (cfg *Config) AddressGroup(name string) (AddressGroup, bool) {
+	for _, g := range cfg.AddressGroups {
+		if g.Name == name {
+			return g, true
+		}
+	}
+
+	return AddressGroup{}, false
+}
+
+// RulePorts returns the ports of a rule, expanding its port groups.
+func (cfg *Config) RulePorts(r FirewallRule) []PortRange {
+	ports := slices.Clone(r.Ports)
+
+	for _, name := range r.PortGroups {
+		for _, g := range cfg.PortGroups {
+			if g.Name == name {
+				ports = append(ports, g.Ports...)
+			}
+		}
+	}
+
+	return ports
+}
+
+// RuleSources returns the source subnets of a rule, expanding its source groups.
+func (cfg *Config) RuleSources(r FirewallRule) []netip.Prefix {
+	subnets := slices.Clone(r.SourceSubnets)
+
+	for _, name := range r.SourceGroups {
+		if g, ok := cfg.AddressGroup(name); ok {
+			subnets = append(subnets, g.Subnets...)
+		}
+	}
+
+	return subnets
 }

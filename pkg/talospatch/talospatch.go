@@ -77,7 +77,7 @@ func Generate(raw []byte, cfg *config.Config) ([]byte, error) {
 		}
 
 		// the zone's links are enforced by routald's input chain
-		docs = append(docs, ruleFor("routal-"+r.Name, r.Protocol, r.Ports, r.SourceSubnets))
+		docs = append(docs, ruleFor("routal-"+r.Name, r.Protocol, cfg.RulePorts(r), cfg.RuleSources(r)))
 	}
 
 	// Talos filters traffic to the router's own addresses in a prerouting chain that runs before

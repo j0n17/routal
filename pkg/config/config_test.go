@@ -73,6 +73,10 @@ links: [wan0]
 		{"nat without forwarding", "apiVersion: v1alpha1\nkind: ForwardingConfig\nipv4: false\nipv6: false\n---\napiVersion: v1alpha1\nkind: MasqueradeConfig\nname: x\noutLink: wan0\n", "need forwarding enabled"},
 		{"toPort with range", "apiVersion: v1alpha1\nkind: PortForwardConfig\nname: x\ninLink: wan0\nprotocol: tcp\nports: [\"80-90\"]\ntoAddress: 10.0.0.1\ntoPort: 8080\n", "single port"},
 		{"two dhcp on link", "apiVersion: v1alpha1\nkind: DHCPServerConfig\nname: a\nlink: lan0\nrangeStart: 10.0.0.10\nrangeEnd: 10.0.0.20\n---\napiVersion: v1alpha1\nkind: DHCPServerConfig\nname: b\nlink: lan0\nrangeStart: 10.0.0.30\nrangeEnd: 10.0.0.40\n", "already has a DHCP server"},
+		{"unknown group", zones + "apiVersion: v1alpha1\nkind: FirewallRuleConfig\nname: x\nfrom: lan\nto: wan\ndestinationGroups: [nope]\n", `destination group "nope" does not exist`},
+		{"group and literal", zones + "apiVersion: v1alpha1\nkind: FirewallAddressGroupConfig\nname: g\nsubnets: [10.0.0.0/8]\n---\napiVersion: v1alpha1\nkind: FirewallRuleConfig\nname: x\nfrom: lan\nto: wan\nsourceGroups: [g]\nsourceSubnets: [10.0.0.0/8]\n", "use either source or sourceGroups"},
+		{"bad group name", "apiVersion: v1alpha1\nkind: FirewallAddressGroupConfig\nname: my-nas\nsubnets: [10.0.0.0/8]\n", "group names must be"},
+		{"port group without protocol", zones + "apiVersion: v1alpha1\nkind: FirewallPortGroupConfig\nname: web\nports: [443]\n---\napiVersion: v1alpha1\nkind: FirewallRuleConfig\nname: x\nfrom: lan\nto: wan\nportGroups: [web]\n", "ports need protocol"},
 		{"duplicate singleton", "apiVersion: v1alpha1\nkind: FirewallConfig\n---\napiVersion: v1alpha1\nkind: FirewallConfig\n", "duplicate FirewallConfig"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -97,3 +97,62 @@ toPort: 5353
 		}
 	}
 }
+
+func TestRenderGroups(t *testing.T) {
+	cfg, err := config.Load([]byte(`apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: srv
+links: [srv0]
+---
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: nas
+subnets: [192.168.30.10/32, fd00:30::10/128]
+---
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: printers
+subnets: [192.168.30.50/32]
+---
+apiVersion: v1alpha1
+kind: FirewallPortGroupConfig
+name: web
+ports: [80, 443, "8000-8100"]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-to-servers
+from: lan
+to: srv
+protocol: tcp
+destinationGroups: [nas, printers]
+portGroups: [web]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := nft.Render(cfg, nil)
+
+	for _, want := range []string{
+		"set addr_nas_v4 {\n\t\ttype ipv4_addr; flags interval;\n\t\telements = { 192.168.30.10/32 }\n\t}",
+		"set addr_nas_v6 {\n\t\ttype ipv6_addr; flags interval;\n\t\telements = { fd00:30::10/128 }\n\t}",
+		"set port_web {\n\t\ttype inet_service; flags interval;\n\t\telements = { 80, 443, 8000-8100 }\n\t}",
+		`ip daddr @addr_nas_v4 meta l4proto tcp th dport @port_web accept comment "lan-to-servers"`,
+		`ip6 daddr @addr_nas_v6 meta l4proto tcp th dport @port_web accept comment "lan-to-servers"`,
+		`ip daddr @addr_printers_v4 meta l4proto tcp th dport @port_web accept comment "lan-to-servers"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+
+	if strings.Contains(out, "addr_printers_v6") {
+		t.Errorf("printers has no IPv6 subnet, no v6 set or rule expected:\n%s", out)
+	}
+}

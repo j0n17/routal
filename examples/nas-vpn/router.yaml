@@ -36,15 +36,26 @@ name: servers-to-wan
 from: servers
 to: wan
 ---
-# NAS web UI (443) from the LAN and from the VPN, both address families. Nothing else on the NAS.
+# Named groups, used by the rules below (nftables sets on the router).
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: nas
+subnets: [192.168.30.10/32, fd00:30::10/128]
+---
+apiVersion: v1alpha1
+kind: FirewallPortGroupConfig
+name: nas_ui
+ports: [443]
+---
+# NAS web UI from the LAN and from the VPN, both address families. Nothing else on the NAS.
 apiVersion: v1alpha1
 kind: FirewallRuleConfig
 name: lan-to-nas
 from: lan
 to: servers
 protocol: tcp
-ports: [443]
-destinationSubnets: [192.168.30.10/32, fd00:30::10/128]
+portGroups: [nas_ui]
+destinationGroups: [nas]
 ---
 apiVersion: v1alpha1
 kind: FirewallRuleConfig
@@ -52,8 +63,8 @@ name: vpn-to-nas
 from: vpn
 to: servers
 protocol: tcp
-ports: [443]
-destinationSubnets: [192.168.30.10/32, fd00:30::10/128]
+portGroups: [nas_ui]
+destinationGroups: [nas]
 ---
 # Already blocked by the default policy; explicit so that attempts are logged under their own name.
 # This matters for IPv6, where the NAS address is routable and there is no NAT in the way.

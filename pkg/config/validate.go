@@ -11,6 +11,8 @@ import (
 var (
 	nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
 	linkRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@-]{0,31}$`)
+	// group names become nftables set names
+	groupRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,30}$`)
 )
 
 // Validate checks every document and the references between them.
@@ -76,6 +78,50 @@ func (cfg *Config) Validate() error {
 
 	zoneExists := func(z string) bool { return names["FirewallZoneConfig"][z] }
 
+	// groups
+	for _, g := range cfg.AddressGroups {
+		checkName("FirewallAddressGroupConfig", g.Name)
+
+		if !groupRe.MatchString(g.Name) {
+			fail("FirewallAddressGroupConfig %q: group names must be letters, digits and _ (they become nftables set names)", g.Name)
+		}
+
+		if len(g.Subnets) == 0 {
+			fail("FirewallAddressGroupConfig %q: subnets must not be empty", g.Name)
+		}
+
+		errs = append(errs, checkPrefixes("FirewallAddressGroupConfig "+g.Name, g.Subnets)...)
+	}
+
+	portGroups := map[string]bool{}
+
+	for _, g := range cfg.PortGroups {
+		checkName("FirewallPortGroupConfig", g.Name)
+
+		if !groupRe.MatchString(g.Name) {
+			fail("FirewallPortGroupConfig %q: group names must be letters, digits and _ (they become nftables set names)", g.Name)
+		}
+
+		if len(g.Ports) == 0 {
+			fail("FirewallPortGroupConfig %q: ports must not be empty", g.Name)
+		}
+
+		portGroups[g.Name] = true
+	}
+
+	checkGroups := func(where, dir string, literal int, groups []string, exists func(string) bool) {
+		if literal > 0 && len(groups) > 0 {
+			fail("%s: use either %s or %sGroups, not both", where, dir, dir)
+		}
+
+		for _, g := range groups {
+			if !exists(g) {
+				fail("%s: %s group %q does not exist", where, dir, g)
+			}
+		}
+	}
+	addrGroupExists := func(n string) bool { _, ok := cfg.AddressGroup(n); return ok }
+
 	// rules
 	for _, r := range cfg.Rules {
 		where := fmt.Sprintf("FirewallRuleConfig %q", r.Name)
@@ -93,9 +139,13 @@ func (cfg *Config) Validate() error {
 			fail("%s: action must be accept or block, got %q", where, r.Action)
 		}
 
-		errs = append(errs, checkProtoPorts(where, r.Protocol, r.Ports, false)...)
+		checkGroups(where, "source", len(r.SourceSubnets), r.SourceGroups, addrGroupExists)
+		checkGroups(where, "destination", len(r.DestinationSubnets), r.DestinationGroups, addrGroupExists)
+		checkGroups(where, "port", len(r.Ports), r.PortGroups, func(n string) bool { return portGroups[n] })
 
-		if r.To == SelfZone && r.Action == ActionAccept && len(r.Ports) == 0 {
+		errs = append(errs, checkProtoPorts(where, r.Protocol, cfg.RulePorts(r), false)...)
+
+		if r.To == SelfZone && r.Action == ActionAccept && len(cfg.RulePorts(r)) == 0 {
 			fail("%s: rules to %q need a protocol and ports (they open router ports in the Talos ingress firewall)", where, SelfZone)
 		}
 
