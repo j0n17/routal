@@ -1,5 +1,11 @@
 # Routal
 
+> [!WARNING]
+> **Experiment, not a real project.** This repo is AI-generated code ("AI slop"), written mostly to
+> try out an idea: running a router on stock Talos Linux with a system extension. It has only been
+> tested in a single VM, has no real-traffic tests, and is not maintained. Do not put it in front of
+> anything you care about.
+
 A GitOps-managed router built on [Talos Linux](https://www.talos.dev): stock Talos runs the
 machine, and the `routald` system extension turns it into a router.
 
