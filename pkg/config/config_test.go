@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/routal/routal/pkg/config"
+	"github.com/j0n17/routal/pkg/config"
 )
 
 func TestExamplesAreValid(t *testing.T) {

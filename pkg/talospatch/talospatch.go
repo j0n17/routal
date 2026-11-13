@@ -11,7 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/routal/routal/pkg/config"
+	"github.com/j0n17/routal/pkg/config"
 )
 
 // ServiceName is the extension service name (manifest and ExtensionServiceConfig).

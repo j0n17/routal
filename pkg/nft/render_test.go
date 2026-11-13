@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/routal/routal/pkg/config"
-	"github.com/routal/routal/pkg/nft"
+	"github.com/j0n17/routal/pkg/config"
+	"github.com/j0n17/routal/pkg/nft"
 )
 
 func TestRenderHomeRouter(t *testing.T) {

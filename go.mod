@@ -1,4 +1,4 @@
-module github.com/routal/routal
+module github.com/j0n17/routal
 
 go 1.26
 

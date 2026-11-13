@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/routal/routal/pkg/config"
+	"github.com/j0n17/routal/pkg/config"
 )
 
 // Table is the nftables table owned by routald.

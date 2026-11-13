@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/routal/routal/pkg/config"
-	"github.com/routal/routal/pkg/talospatch"
+	"github.com/j0n17/routal/pkg/config"
+	"github.com/j0n17/routal/pkg/talospatch"
 )
 
 func TestGenerate(t *testing.T) {
