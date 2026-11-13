@@ -50,6 +50,10 @@ the LAN only. Both use the unmodified `examples/home-router` files; the MACs mat
 - Port forward `nas-https`: `nc <router WAN> 443` from the Mac gets the client's answer.
 - Removing `lan-to-wan` with `--mode try`: the client lost the Internet after about 13 s and got it back
   when Talos reverted at 60 s.
+- Remote access over WireGuard (the `guest-and-vpn` pattern): a peer on the WAN side, a Docker container
+  on the Mac, cannot reach 192.168.1.10 on its own. Through wg0 (zone `vpn`, rule `vpn-to-lan`, rule
+  `wan -> self udp 51820`), it gets the NAS's answer and ping works. Without `vpn-to-lan` the tunnel still
+  comes up but the NAS is blocked.
 - How to reproduce: create the VMs with UTM AppleScript (`make new virtual machine`, QEMU backend,
   `network interfaces: {{mode:shared, address:"52:54:00:00:00:01"}, {mode:host, address:"52:54:00:00:00:02"}}`).
   Use an 8 GiB qcow2 converted from `make image`.
