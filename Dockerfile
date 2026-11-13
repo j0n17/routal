@@ -11,9 +11,10 @@ ARG TARGETOS TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /routald ./cmd/routald
 
-# Container rootfs of the extension service: nft and its libraries, plus routald.
+# Container rootfs of the extension service: nft, dnsmasq and their libraries, plus routald.
 FROM alpine:${ALPINE_VERSION} AS rootfs
-RUN apk add --no-cache nftables && rm -rf /var/cache/apk /etc/apk /lib/apk /sbin/apk
+RUN apk add --no-cache nftables dnsmasq && rm -rf /var/cache/apk /etc/apk /lib/apk /sbin/apk \
+    && mkdir -p /var/lib/routal # mount point for the persistent state (the rootfs is read-only)
 COPY --from=build /routald /usr/local/bin/routald
 
 # Talos system extension layout.

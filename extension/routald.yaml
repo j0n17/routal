@@ -3,11 +3,20 @@ name: routald
 container:
   entrypoint: /usr/local/bin/routald
   args: ["run"]
+  mounts:
+    # dnsmasq config and DHCP leases, kept across restarts and reboots
+    - source: /var/lib/routal
+      destination: /var/lib/routal
+      type: bind
+      options: [rbind, rw]
   security:
     # The default read-only paths include /proc/sys; routald writes the forwarding sysctls.
     readonlyPaths: ["/proc/bus", "/proc/fs", "/proc/irq", "/proc/sysrq-trigger"]
 depends:
   - network: [addresses]
   - configuration: true
+  # Talos mounts the /var/lib volume after extension services may start; the bind source above
+  # can only be created once it exists.
+  - path: /var/lib
 restart: always
 logToConsole: true

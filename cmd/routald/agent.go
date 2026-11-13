@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -24,6 +25,7 @@ const reconcileInterval = 5 * time.Second
 type agent struct {
 	configPath string
 	nftBin     string
+	dnsmasq    *dnsmasqSupervisor
 
 	applied [32]byte
 }
@@ -42,6 +44,7 @@ func (a *agent) run(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
+			a.dnsmasq.stop()
 			log.Printf("routald stopping, rules left in place")
 
 			return nil
@@ -56,6 +59,11 @@ func (a *agent) reconcile() error {
 		return err
 	}
 
+	return errors.Join(a.applyFirewall(cfg), a.dnsmasq.reconcile(cfg))
+}
+
+// applyFirewall applies the forwarding sysctls and the nftables ruleset when they changed.
+func (a *agent) applyFirewall(cfg *config.Config) error {
 	var aliases []string
 
 	ruleset := nft.Render(cfg, func(name string) string {

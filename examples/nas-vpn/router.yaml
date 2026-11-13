@@ -84,9 +84,80 @@ to: self
 protocol: udp
 ports: [51820]
 ---
+# DNS and DHCP on the router, from the inside zones only.
+apiVersion: v1alpha1
+kind: FirewallPortGroupConfig
+name: dns_dhcp
+ports: [53, 67]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-dhcp
+from: lan
+to: self
+protocol: udp
+portGroups: [dns_dhcp]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: servers-dns-dhcp
+from: servers
+to: self
+protocol: udp
+portGroups: [dns_dhcp]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: vpn-dns
+from: vpn
+to: self
+protocol: udp
+ports: [53]
+---
 # IPv4 only: IPv6 is routed without NAT.
 apiVersion: v1alpha1
 kind: MasqueradeConfig
 name: out
 outLink: wan0
 sourceSubnets: [192.168.1.0/24, 192.168.30.0/24, 10.8.0.0/24]
+---
+# Served by dnsmasq inside the routald extension.
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+rangeStart: 192.168.1.100
+rangeEnd: 192.168.1.200
+domain: home.arpa
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: servers
+link: srv0
+rangeStart: 192.168.30.100
+rangeEnd: 192.168.30.150
+domain: home.arpa
+staticLeases:
+  - mac: 52:54:00:00:00:10
+    address: 192.168.30.10
+    hostname: nas
+---
+# Caching DNS for the inside zones; DHCP clients resolve as <hostname>.home.arpa.
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0, srv0, wg0]
+upstreams: [9.9.9.9, 2620:fe::fe]
+localDomain: home.arpa
+---
+# IPv6: SLAAC on the LAN and the servers VLAN.
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: lan
+link: lan0
+prefixes: [fd00:1::/64]
+---
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: servers
+link: srv0
+prefixes: [fd00:30::/64]

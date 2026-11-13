@@ -3,6 +3,7 @@
 //	routald run [-config /etc/routal/router.yaml]   apply and keep reconciling (extension entrypoint)
 //	routald validate <router.yaml>                    check a config
 //	routald render <router.yaml>                      print the nftables ruleset
+//	routald render-dnsmasq <router.yaml>              print the dnsmasq config (DHCP, DNS, RA)
 //	routald talos-patch <router.yaml>                 print the Talos machine config patch
 package main
 
@@ -15,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/j0n17/routal/pkg/config"
+	"github.com/j0n17/routal/pkg/dnsmasq"
 	"github.com/j0n17/routal/pkg/nft"
 	"github.com/j0n17/routal/pkg/talospatch"
 )
@@ -27,7 +29,7 @@ func main() {
 }
 
 func usage() error {
-	return fmt.Errorf("usage: routald run|validate|render|talos-patch [args]")
+	return fmt.Errorf("usage: routald run|validate|render|render-dnsmasq|talos-patch [args]")
 }
 
 func run(args []string) error {
@@ -41,12 +43,18 @@ func run(args []string) error {
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		path := fs.String("config", talospatch.ConfigPath, "router config file")
 		nftBin := fs.String("nft", "/usr/sbin/nft", "nft binary (extension services run with an empty PATH)")
+		dnsmasqBin := fs.String("dnsmasq", "/usr/sbin/dnsmasq", "dnsmasq binary")
+		stateDir := fs.String("state-dir", "/var/lib/routal", "persistent directory (dnsmasq config and leases)")
 		_ = fs.Parse(args)
 
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 
-		return (&agent{configPath: *path, nftBin: *nftBin}).run(ctx)
+		return (&agent{
+			configPath: *path,
+			nftBin:     *nftBin,
+			dnsmasq:    &dnsmasqSupervisor{bin: *dnsmasqBin, stateDir: *stateDir},
+		}).run(ctx)
 	}
 
 	if len(args) != 1 {
@@ -68,6 +76,8 @@ func run(args []string) error {
 		fmt.Printf("%s is valid\n", args[0])
 	case "render":
 		fmt.Print(nft.Render(cfg, nil))
+	case "render-dnsmasq":
+		fmt.Print(dnsmasq.Render(cfg, nil, "/var/lib/routal/dnsmasq.leases"))
 	case "talos-patch":
 		out, err := talospatch.Generate(raw, cfg)
 		if err != nil {

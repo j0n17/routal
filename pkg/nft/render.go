@@ -59,16 +59,15 @@ func (r renderer) links(names []string) string {
 	return "{ " + strings.Join(slices.Compact(resolved), ", ") + " }"
 }
 
-// input narrows Talos-opened router ports to the links of the zones allowed by `to: self` rules.
+// input narrows the router ports opened in Talos (by `to: self` rules) to the links of the zones
+// that rules allow: each rule accepts its zone's links, then whatever else reaches those ports is
+// dropped. Rules may share ports (e.g. DNS from several zones), so the drops come last.
 func (r renderer) input(b *strings.Builder) {
-	type key struct {
-		proto config.Protocol
-		ports string
-	}
+	b.WriteString("\tchain input {\n\t\ttype filter hook input priority filter; policy accept;\n")
 
-	allowed := map[key][]string{}
+	selfPorts := map[config.Protocol][]config.PortRange{}
 
-	var order []key
+	var protos []config.Protocol
 
 	for _, rule := range r.cfg.Rules {
 		rulePorts := r.cfg.RulePorts(rule)
@@ -76,22 +75,46 @@ func (r renderer) input(b *strings.Builder) {
 			continue
 		}
 
-		k := key{rule.Protocol, ports(rulePorts)}
-		if _, ok := allowed[k]; !ok {
-			order = append(order, k)
+		if len(selfPorts[rule.Protocol]) == 0 {
+			protos = append(protos, rule.Protocol)
 		}
 
-		allowed[k] = append(allowed[k], r.cfg.ZoneLinks(rule.From)...)
+		selfPorts[rule.Protocol] = append(selfPorts[rule.Protocol], rulePorts...)
+
+		fmt.Fprintf(b, "\t\tiifname %s meta l4proto %s th dport %s accept comment %q\n",
+			r.links(r.cfg.ZoneLinks(rule.From)), l4proto(rule.Protocol), ports(mergeRanges(rulePorts)), rule.Name)
 	}
 
-	b.WriteString("\tchain input {\n\t\ttype filter hook input priority filter; policy accept;\n")
+	if len(protos) > 0 {
+		b.WriteString("\t\tiifname \"lo\" accept\n")
+	}
 
-	for _, k := range order {
-		fmt.Fprintf(b, "\t\tiifname != %s meta l4proto %s th dport %s drop\n",
-			r.links(append([]string{"lo"}, allowed[k]...)), l4proto(k.proto), k.ports)
+	for _, p := range protos {
+		fmt.Fprintf(b, "\t\tmeta l4proto %s th dport %s drop\n", l4proto(p), ports(mergeRanges(selfPorts[p])))
 	}
 
 	b.WriteString("\t}\n")
+}
+
+// mergeRanges sorts port ranges and merges overlapping or adjacent ones (nft rejects overlapping
+// interval set elements).
+func mergeRanges(in []config.PortRange) []config.PortRange {
+	sorted := slices.Clone(in)
+	slices.SortFunc(sorted, func(a, b config.PortRange) int { return int(a.Lo) - int(b.Lo) })
+
+	var out []config.PortRange
+
+	for _, pr := range sorted {
+		if n := len(out); n > 0 && int(pr.Lo) <= int(out[n-1].Hi)+1 {
+			out[n-1].Hi = max(out[n-1].Hi, pr.Hi)
+
+			continue
+		}
+
+		out = append(out, pr)
+	}
+
+	return out
 }
 
 func (r renderer) forward(b *strings.Builder) {

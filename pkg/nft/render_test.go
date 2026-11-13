@@ -29,8 +29,9 @@ func TestRenderHomeRouter(t *testing.T) {
 		"ct state established,related accept",
 		`iifname { "eth1" } oifname { "wan0" } accept comment "lan-to-wan"`,
 		`iifname { "wan0" } oifname { "eth1" } ip daddr { 192.168.1.10/32 } meta l4proto tcp th dport { 443 } accept comment "wan-to-nas-https"`,
-		`iifname != { "eth1", "lo" } meta l4proto udp th dport { 53, 67 } drop`,
-		`iifname != { "eth1", "lo" } meta l4proto tcp th dport { 53 } drop`,
+		`iifname { "eth1" } meta l4proto udp th dport { 53, 67 } accept comment "lan-dns-dhcp"`,
+		`iifname { "eth1" } meta l4proto tcp th dport { 53 } accept comment "lan-dns-tcp"`,
+		"iifname \"lo\" accept\n\t\tmeta l4proto udp th dport { 53, 67 } drop\n\t\tmeta l4proto tcp th dport { 53 } drop\n",
 		`iifname "wan0" meta nfproto ipv4 tcp dport { 443 } dnat ip to 192.168.1.10 comment "nas-https"`,
 		`oifname "wan0" ip saddr { 192.168.1.0/24 } masquerade comment "lan-out"`,
 	} {
@@ -154,5 +155,68 @@ portGroups: [web]
 
 	if strings.Contains(out, "addr_printers_v6") {
 		t.Errorf("printers has no IPv6 subnet, no v6 set or rule expected:\n%s", out)
+	}
+}
+
+// Two zones sharing a router port must both keep access (regression: each rule used to drop the
+// other zone's links).
+func TestRenderSelfSharedPorts(t *testing.T) {
+	cfg, err := config.LoadFile("../../examples/nas-vpn/router.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := nft.Render(cfg, nil)
+
+	for _, want := range []string{
+		`iifname { "lan0" } meta l4proto udp th dport { 53, 67 } accept comment "lan-dns-dhcp"`,
+		`iifname { "srv0" } meta l4proto udp th dport { 53, 67 } accept comment "servers-dns-dhcp"`,
+		`iifname { "wg0" } meta l4proto udp th dport { 53 } accept comment "vpn-dns"`,
+		`iifname { "wan0" } meta l4proto udp th dport { 51820 } accept comment "wireguard"`,
+		"meta l4proto udp th dport { 53, 67, 51820 } drop",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+
+	if strings.Contains(out, "iifname !=") {
+		t.Errorf("no negated interface drops expected:\n%s", out)
+	}
+}
+
+func TestMergeRanges(t *testing.T) {
+	cfg, err := config.Load([]byte(`apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: a
+links: [a0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: b
+links: [b0]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: r1
+from: a
+to: self
+protocol: tcp
+ports: ["8000-8100", 22]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: r2
+from: b
+to: self
+protocol: tcp
+ports: ["8050-8200", 23]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if out := nft.Render(cfg, nil); !strings.Contains(out, "meta l4proto tcp th dport { 22-23, 8000-8200 } drop") {
+		t.Errorf("overlapping/adjacent ranges not merged:\n%s", out)
 	}
 }

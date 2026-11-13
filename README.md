@@ -14,7 +14,7 @@ machine, and the `routald` system extension turns it into a router.
 | interfaces, VLANs, bonds, bridges, WireGuard, DHCP client, BGP | IP forwarding |
 | ingress firewall for the router itself | zone firewall for forwarded traffic |
 | A/B upgrades, `apply-config --mode try` (auto-rollback) | masquerade / SNAT, port forwards |
-| API, `talosctl`, Kubernetes-free mode | (next) DHCP server, DNS server, IPv6 RA |
+| API, `talosctl`, Kubernetes-free mode | DHCP server, caching DNS, IPv6 RA (dnsmasq) |
 
 Config is two sets of YAML documents, both kept in git:
 
@@ -24,6 +24,7 @@ Config is two sets of YAML documents, both kept in git:
 ```sh
 routald validate router.yaml
 routald render router.yaml                       # nftables ruleset it will apply
+routald render-dnsmasq router.yaml               # dnsmasq config (DHCP, DNS, RA)
 routald talos-patch router.yaml > router-patch.yaml
 talosctl patch mc --patch @router-patch.yaml --mode try --timeout 2m   # reverts unless confirmed
 ```
@@ -40,11 +41,13 @@ file) and turns `to: self` rules and port forwards into Talos `NetworkRuleConfig
 | `FirewallConfig` | default for forwarded traffic (`block`), `logBlocked` | yes |
 | `FirewallZoneConfig` | named group of links | yes |
 | `FirewallRuleConfig` | stateful rule from a zone to a zone or `self` | yes |
+| `FirewallAddressGroupConfig` | named IPv4/IPv6 subnets, used as `sourceGroups`/`destinationGroups` | yes (nftables sets) |
+| `FirewallPortGroupConfig` | named ports, used as `portGroups` | yes (nftables sets) |
 | `MasqueradeConfig` | source NAT on an outgoing link | yes |
 | `PortForwardConfig` | destination NAT on an incoming link | yes |
-| `DHCPServerConfig` | DHCPv4 pools and static leases | validated only |
-| `DNSServerConfig` | caching DNS for local networks | validated only |
-| `RouterAdvertisementConfig` | IPv6 SLAAC | validated only |
+| `DHCPServerConfig` | DHCPv4 pools and static leases (by MAC) | yes (dnsmasq) |
+| `DNSServerConfig` | caching DNS, local domain, DHCP names, static records | yes (dnsmasq) |
+| `RouterAdvertisementConfig` | IPv6 SLAAC (optionally DHCPv6 options) | yes (dnsmasq) |
 
 Links can be kernel names or Talos `LinkAliasConfig` aliases. routald programs its own
 `inet routal` nftables table; Talos keeps `inet talos`.
@@ -55,6 +58,7 @@ Requires Docker (Go builds run in a container).
 
 ```sh
 make test
+make check                     # tests + every example's dnsmasq config checked by the real dnsmasq
 make extension ARCH=arm64      # _out/routald-arm64.tar (flat extension for the imager)
 make image ARCH=arm64          # _out/metal-arm64.raw, Talos with routald baked in
 ```

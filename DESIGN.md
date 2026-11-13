@@ -68,12 +68,22 @@ the LAN only. Both use the unmodified `examples/home-router` files; the MACs mat
   WAN attempts show up in the router's kernel log as `routal wan-to-servers: IN=enp0s1 OUT=srv0 ...` for
   both families, so they reach the router and the rule drops them.
   In the test only, the VLAN MTU is 1496: the macOS virtual switch drops 1518-byte tagged frames.
+- dnsmasq (same VMs; DHCP/RA only on the servers VLAN, because macOS already serves DHCP on the
+  host-only network):
+  - Static lease: `DHCPACK(srv0) 192.168.30.10 52:54:00:00:00:10 nas`, with the IPv4 default route
+    coming from DHCP.
+  - RA: the NAS got a SLAAC address (fd00:30::5054:ff:fe00:10) and an IPv6 default route to the router.
+  - DNS from the LAN: `nas.home.arpa` -> 192.168.30.10 (DHCP name), and external names resolve.
+  - The lease file under /var/lib/routal survives a router reboot.
+  - Bugs found: Talos can start an extension service before the /var/lib volume exists (fixed by
+    `depends: path: /var/lib`). The input chain dropped DNS from the LAN once another zone also had a
+    `to: self` rule on port 53 (fixed: accepts per rule, then one drop per protocol on the merged ports).
 - How to reproduce: create the VMs with UTM AppleScript (`make new virtual machine`, QEMU backend,
   `network interfaces: {{mode:shared, address:"52:54:00:00:00:01"}, {mode:host, address:"52:54:00:00:00:02"}}`).
   Use an 8 GiB qcow2 converted from `make image`.
 
 ## Next
-1. DHCP server + DNS (embed Go libs vs. bundle dnsmasq in the extension) + RA.
+1. FQDN-based rules (dnsmasq nftset; Alpine's dnsmasq is built without it, so routald must ship its own build).
 2. Own installer image (Image Factory schematic or imager `installer` output) so install/upgrade keeps the extension.
 3. GitOps: CI workflow (render + `--mode try` + health check + confirm), then an on-device pull agent.
 4. Stale `NetworkRuleConfig` cleanup when a `to: self` rule is removed (patches only add).

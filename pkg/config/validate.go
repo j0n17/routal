@@ -249,6 +249,10 @@ func (cfg *Config) Validate() error {
 
 		raLinks[ra.Link] = true
 
+		if ra.Managed {
+			fail("%s: managed (stateful DHCPv6) is not supported yet; use SLAAC (default) or other: true", where)
+		}
+
 		for _, p := range ra.Prefixes {
 			if !p.Addr().Is6() {
 				fail("%s: prefix %s is not IPv6", where, p)

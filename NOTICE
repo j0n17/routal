@@ -5,5 +5,6 @@ Routal runs on Talos Linux (https://github.com/siderolabs/talos, Copyright (c)
 Sidero Labs, Inc., MPL-2.0). It does not include Talos source code.
 
 The extension image bundles unmodified Alpine Linux packages, notably nftables
-(GPL-2.0) and its libraries, run as separate programs. Their sources are
-available from https://pkgs.alpinelinux.org and https://netfilter.org.
+(GPL-2.0) and dnsmasq (GPL-2.0/GPL-3.0) and their libraries, run as separate
+programs. Their sources are available from https://pkgs.alpinelinux.org,
+https://netfilter.org and https://thekelleys.org.uk/dnsmasq/.
