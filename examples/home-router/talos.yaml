@@ -1,0 +1,53 @@
+# Talos side of a home router: interfaces, addresses, the router's own ingress firewall.
+# These are plain Talos documents; apply on top of `talosctl gen config --skip-k8s-etcd`.
+apiVersion: v1alpha1
+kind: HostnameConfig
+auto: "off"
+hostname: home-router
+---
+# Stable names from MAC addresses (adjust the MACs). routald resolves these aliases too.
+apiVersion: v1alpha1
+kind: LinkAliasConfig
+name: wan0
+selector:
+  match: mac(link.permanent_addr) == "52:54:00:00:00:01"
+---
+apiVersion: v1alpha1
+kind: LinkAliasConfig
+name: lan0
+selector:
+  match: mac(link.permanent_addr) == "52:54:00:00:00:02"
+---
+# WAN: address from the ISP.
+apiVersion: v1alpha1
+kind: DHCPv4Config
+name: wan0
+---
+# LAN: static address, the router is the gateway.
+apiVersion: v1alpha1
+kind: LinkConfig
+name: lan0
+up: true
+addresses:
+  - address: 192.168.1.1/24
+---
+# Traffic to the router itself is blocked unless opened (routald opens what `to: self` rules need).
+apiVersion: v1alpha1
+kind: NetworkDefaultActionConfig
+ingress: block
+---
+# Talos API (talosctl) from the LAN only.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: talos-api
+portSelector:
+  ports: [50000]
+  protocol: tcp
+ingress:
+  - subnet: 192.168.1.0/24
+---
+apiVersion: v1alpha1
+kind: TimeSyncConfig
+ntp:
+  servers:
+    - pool.ntp.org

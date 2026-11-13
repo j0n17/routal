@@ -1,0 +1,84 @@
+# Router side, read by routald: one WAN (wan0), one LAN (lan0, 192.168.1.0/24).
+#
+#   routald validate examples/home-router/router.yaml
+#   routald talos-patch examples/home-router/router.yaml > router-patch.yaml
+#   talosctl patch mc --patch @router-patch.yaml
+#
+# Forwarding is on by default; forwarded traffic is blocked unless a rule accepts it.
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+# The LAN can reach the Internet (replies come back automatically, rules are stateful).
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-to-wan
+from: lan
+to: wan
+---
+# The LAN can use the router's DNS and DHCP; "self" is the router itself.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-dhcp
+from: lan
+to: self
+protocol: udp
+ports: [53, 67]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-tcp
+from: lan
+to: self
+protocol: tcp
+ports: [53]
+---
+# NAT: LAN hosts go out with the WAN address.
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: lan-out
+outLink: wan0
+sourceSubnets: [192.168.1.0/24]
+---
+# Expose the NAS web server; the forward rule below lets the translated traffic through.
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: nas-https
+inLink: wan0
+protocol: tcp
+ports: [443]
+toAddress: 192.168.1.10
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: wan-to-nas-https
+from: wan
+to: lan
+protocol: tcp
+ports: [443]
+destinationSubnets: [192.168.1.10/32]
+---
+# Not applied yet (DHCP and DNS servers come next), but validated.
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+rangeStart: 192.168.1.100
+rangeEnd: 192.168.1.200
+domain: home.arpa
+staticLeases:
+  - mac: aa:bb:cc:dd:ee:10
+    address: 192.168.1.10
+    hostname: nas
+---
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+upstreams: [9.9.9.9, 149.112.112.112]
+localDomain: home.arpa

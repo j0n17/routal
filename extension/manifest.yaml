@@ -1,0 +1,9 @@
+version: v1alpha1
+metadata:
+  name: routald
+  version: "$VERSION"
+  author: Routal
+  description: Routal router agent (forwarding, zone firewall, NAT) for Talos Linux
+  compatibility:
+    talos:
+      version: ">= v1.15.0-alpha.0"

@@ -1,0 +1,102 @@
+# Home router plus an isolated guest network (VLAN 20) and WireGuard remote access.
+apiVersion: v1alpha1
+kind: FirewallConfig
+logBlocked: true
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: guest
+links: [lan0.20]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: vpn
+links: [wg0]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-to-wan
+from: lan
+to: wan
+---
+# Guests get the Internet only: there is no guest -> lan rule, so that stays blocked.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: guest-to-wan
+from: guest
+to: wan
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: vpn-to-lan
+from: vpn
+to: lan
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: vpn-to-wan
+from: vpn
+to: wan
+---
+# DNS/DHCP on the router for the LAN and guests (same ports: both zones are allowed).
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-dhcp
+from: lan
+to: self
+protocol: udp
+ports: [53, 67]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: guest-dns-dhcp
+from: guest
+to: self
+protocol: udp
+ports: [53, 67]
+---
+# The WireGuard handshake reaches the router from the Internet.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: wireguard
+from: wan
+to: self
+protocol: udp
+ports: [51820]
+---
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: out
+outLink: wan0
+sourceSubnets: [192.168.1.0/24, 192.168.20.0/24, 10.8.0.0/24]
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+rangeStart: 192.168.1.100
+rangeEnd: 192.168.1.200
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: guest
+link: lan0.20
+rangeStart: 192.168.20.100
+rangeEnd: 192.168.20.250
+leaseTime: 2h
+dnsServers: [9.9.9.9]
+---
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0, lan0.20]
+localDomain: home.arpa

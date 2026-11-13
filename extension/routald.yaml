@@ -1,0 +1,13 @@
+# Talos extension service definition for routald.
+name: routald
+container:
+  entrypoint: /usr/local/bin/routald
+  args: ["run"]
+  security:
+    # The default read-only paths include /proc/sys; routald writes the forwarding sysctls.
+    readonlyPaths: ["/proc/bus", "/proc/fs", "/proc/irq", "/proc/sysrq-trigger"]
+depends:
+  - network: [addresses]
+  - configuration: true
+restart: always
+logToConsole: true

@@ -1,0 +1,23 @@
+# Additions to examples/home-router/talos.yaml: a guest VLAN and a WireGuard interface.
+apiVersion: v1alpha1
+kind: VLANConfig
+name: lan0.20
+vlanID: 20
+parent: lan0
+up: true
+addresses:
+  - address: 192.168.20.1/24
+---
+# Generate keys with `wg genkey | tee priv | wg pubkey`.
+apiVersion: v1alpha1
+kind: WireguardConfig
+name: wg0
+privateKey: GA1E1VB+g41Dl0+UH2TMW9C5953y+moVg6JIIqkJbmw= # replace me
+listenPort: 51820
+peers:
+  - publicKey: 735jkJdcVDninU5PzLJ/S+bfN6Q3QOk6svWrVLMJQAk= # the phone
+    allowedIPs:
+      - 10.8.0.2/32
+up: true
+addresses:
+  - address: 10.8.0.1/24

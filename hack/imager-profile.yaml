@@ -1,0 +1,18 @@
+# Talos imager profile: metal disk image with the routald extension baked in.
+arch: $ARCH
+platform: metal
+secureboot: false
+version: $TALOS_VERSION
+input:
+  kernel:
+    path: /usr/install/$ARCH/vmlinuz
+  initramfs:
+    path: /usr/install/$ARCH/initramfs.xz
+  systemExtensions:
+    - tarballPath: /out/routald-$ARCH.tar
+output:
+  kind: image
+  imageOptions:
+    diskSize: 2147483648 # the 1 GB default is too small for the EFI partition
+    diskFormat: raw
+  outFormat: raw
