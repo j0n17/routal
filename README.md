@@ -29,7 +29,8 @@ talosctl patch mc --patch @router-patch.yaml --mode try --timeout 2m   # reverts
 ```
 
 `talos-patch` wraps router.yaml in an `ExtensionServiceConfig` (Talos restarts routald with the new
-file) and turns `to: self` rules into Talos `NetworkRuleConfig` documents.
+file) and turns `to: self` rules and port forwards into Talos `NetworkRuleConfig` documents
+(Talos filters traffic to the router's addresses before routald's DNAT runs).
 
 ## Router documents (`apiVersion: v1alpha1`)
 

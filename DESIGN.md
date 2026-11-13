@@ -23,6 +23,8 @@ git ──> talosctl patch mc --mode try (CI or on-device agent, later)
 
 - `to: self` rules: Talos' ingress firewall must accept the packet, so `routald talos-patch` emits a
   `NetworkRuleConfig` for each; routald's `input` chain then drops it on links outside the zone.
+- Port forwards: Talos' `prerouting` filter (priority -110) runs before routald's DNAT (-100) and drops
+  new connections to the router's addresses, so `talos-patch` also opens each forwarded port there.
 - Link aliases (`LinkAliasConfig`) are kernel `ifalias` values, not names; routald resolves them from
   `/sys/class/net/*/ifalias` and re-applies when they change (5 s reconcile loop).
 - routald leaves its rules in place when it stops, so a restart never opens the firewall.
@@ -31,6 +33,14 @@ git ──> talosctl patch mc --mode try (CI or on-device agent, later)
 - Extension loads; the service writes the forwarding sysctls (needs `readonlyPaths` without `/proc/sys`).
 - nft accepts the rendered ruleset alongside `inet talos`; Talos API still reachable with ingress `block`.
 - `patch mc --mode try`: Talos restarts routald with the new router.yaml, then reverts it after the timeout.
+
+Real-traffic tests (Mac as the WAN-side client, arm64 VM):
+- Lockout: a `lan -> self tcp 50000` rule applied with `--mode try` cut talosctl after about 22 s.
+  Talos reverted at 60 s and the API came back on its own.
+- Port forward router:8080 -> Mac:8000: the page was served, and the Mac saw the request coming from
+  the router (DNAT + forward + SNAT). Without the forward rule, the default policy blocks the request.
+- Not tested: a client behind the router. tart's shared network isolates VMs from each other and drops
+  802.1Q frames; this test needs Softnet with `--net-softnet-allow` or bridged networking.
 
 ## Next
 1. DHCP server + DNS (embed Go libs vs. bundle dnsmasq in the extension) + RA.

@@ -1,12 +1,14 @@
 // Package talospatch turns a router config into a Talos machine config patch.
 //
 // The patch carries router.yaml to the routald extension (ExtensionServiceConfig) and opens the
-// router ports used by `to: self` rules in the Talos ingress firewall (NetworkRuleConfig).
+// router ports used by `to: self` rules and port forwards in the Talos ingress firewall
+// (NetworkRuleConfig).
 package talospatch
 
 import (
 	"bytes"
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -74,31 +76,14 @@ func Generate(raw []byte, cfg *config.Config) ([]byte, error) {
 			continue
 		}
 
-		nrc := networkRuleConfig{
-			APIVersion:   "v1alpha1",
-			Kind:         "NetworkRuleConfig",
-			Name:         "routal-" + r.Name,
-			PortSelector: portSelector{Protocol: string(r.Protocol)},
-		}
+		// the zone's links are enforced by routald's input chain
+		docs = append(docs, ruleFor("routal-"+r.Name, r.Protocol, r.Ports, r.SourceSubnets))
+	}
 
-		for _, p := range r.Ports {
-			if p.Lo == p.Hi {
-				nrc.PortSelector.Ports = append(nrc.PortSelector.Ports, int(p.Lo))
-			} else {
-				nrc.PortSelector.Ports = append(nrc.PortSelector.Ports, p.String())
-			}
-		}
-
-		for _, s := range r.SourceSubnets {
-			nrc.Ingress = append(nrc.Ingress, ingressRule{Subnet: s.String()})
-		}
-
-		if len(nrc.Ingress) == 0 {
-			// the zone's links are enforced by routald's input chain
-			nrc.Ingress = []ingressRule{{Subnet: "0.0.0.0/0"}, {Subnet: "::/0"}}
-		}
-
-		docs = append(docs, nrc)
+	// Talos filters traffic to the router's own addresses in a prerouting chain that runs before
+	// routald's DNAT, so forwarded ports must be opened there too.
+	for _, pf := range cfg.PortForwards {
+		docs = append(docs, ruleFor("routal-pf-"+pf.Name, pf.Protocol, pf.Ports, pf.SourceSubnets))
 	}
 
 	var buf bytes.Buffer
@@ -119,4 +104,31 @@ func Generate(raw []byte, cfg *config.Config) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+func ruleFor(name string, proto config.Protocol, ports []config.PortRange, subnets []netip.Prefix) networkRuleConfig {
+	nrc := networkRuleConfig{
+		APIVersion:   "v1alpha1",
+		Kind:         "NetworkRuleConfig",
+		Name:         name,
+		PortSelector: portSelector{Protocol: string(proto)},
+	}
+
+	for _, p := range ports {
+		if p.Lo == p.Hi {
+			nrc.PortSelector.Ports = append(nrc.PortSelector.Ports, int(p.Lo))
+		} else {
+			nrc.PortSelector.Ports = append(nrc.PortSelector.Ports, p.String())
+		}
+	}
+
+	for _, s := range subnets {
+		nrc.Ingress = append(nrc.Ingress, ingressRule{Subnet: s.String()})
+	}
+
+	if len(nrc.Ingress) == 0 {
+		nrc.Ingress = []ingressRule{{Subnet: "0.0.0.0/0"}, {Subnet: "::/0"}}
+	}
+
+	return nrc
 }
