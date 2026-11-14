@@ -1,0 +1,9 @@
+#!/bin/sh
+# One dyndns2 exchange on stdin/stdout (socat SYSTEM): log the request line, read the headers to
+# the end, answer "good".
+IFS= read -r line
+echo "$line" >> "${DDNS_LOG:-/tmp/ddns.log}"
+while IFS= read -r h; do
+	case $h in "" | "$(printf '\r')") break ;; esac
+done
+printf 'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\ngood\r\n'

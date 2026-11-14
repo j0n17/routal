@@ -112,8 +112,7 @@ put isp /tmp/hosts.txt <<CONF
 0.0.0.0 ads.example.com
 0.0.0.0 tracker.example.com
 CONF
-nsx isp sh -c 'printf "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n" > /tmp/hosts.http && cat /tmp/hosts.txt >> /tmp/hosts.http'
-bg isp "socat TCP-LISTEN:8081,fork,reuseaddr SYSTEM:'cat /tmp/hosts.http'"
+bg isp "socat TCP-LISTEN:8081,fork,reuseaddr EXEC:'/test/bin/http-file /tmp/hosts.txt'"
 bg isp "unbound -c /tmp/isp-unbound.conf > /tmp/isp-unbound.log 2>&1"
 
 echo "== router config: examples/nas-vpn + test overlay"
@@ -233,7 +232,7 @@ put isp /tmp/isp-kea6.json <<CONF
 CONF
 bg isp "mkdir -p /tmp/isp-kea && KEA_PIDFILE_DIR=/tmp/isp-kea KEA_LOCKFILE_DIR=/tmp/isp-kea kea-dhcp6 -c /tmp/isp-kea6.json > /tmp/isp-kea6.log 2>&1"
 # a dyndns2 server that records the updates
-bg isp "socat TCP-LISTEN:8053,fork,reuseaddr SYSTEM:'head -1 >> /tmp/ddns.log; printf \"HTTP/1.0 200 OK\\r\\n\\r\\ngood\\n\"'"
+bg isp "socat TCP-LISTEN:8053,fork,reuseaddr EXEC:/test/bin/ddns-reply"
 
 # router: announce whatever /64s the links get (drop the explicit LAN prefix), add PD and DDNS
 nsx router mkdir -p /tmp/secrets
@@ -282,6 +281,8 @@ wait_for 40 renewed && pass "lease renewed at T1" || fail "no renewal: $(nsx rou
 
 ddns() { nsx isp grep -q "hostname=home.example.org&myip=203.0.113.2" /tmp/ddns.log; }
 wait_for 40 ddns && pass "dynamic DNS update: $(nsx isp head -1 /tmp/ddns.log | cut -c1-70)" || fail "no dynamic DNS update: $(nsx router grep inadyn /tmp/routald.log | tail -3)"
+sleep 3
+nsx router grep -q "inadyn exited" /tmp/routald.log && fail "inadyn exits: $(nsx router grep inadyn /tmp/routald.log | tail -2)" || pass "inadyn accepted the provider's answer (no exit)"
 
 echo "== WAN: PPPoE (pppd + rp-pppoe on the router, pppoe-server on the ISP)"
 put isp /tmp/pppoe-server-options <<CONF

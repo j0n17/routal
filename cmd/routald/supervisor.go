@@ -18,19 +18,30 @@ import (
 )
 
 // supervisor runs the service daemons as child processes. A daemon is restarted when its rendered
-// config changes, and started again when it exits; a config the daemon's own check rejects is not
-// installed and the running daemon keeps the previous one.
+// config changes, and started again when it exits, after a delay that doubles while it keeps
+// exiting quickly (a daemon failing against a remote service must not hammer it); a config the
+// daemon's own check rejects is not installed and the running daemon keeps the previous one.
 type supervisor struct {
 	dirs  services.Dirs
 	procs map[string]*proc
 	warns map[string]string
 }
 
+// restart delays after an exit: doubled after each exit within a minute of the start
+const (
+	minRestartDelay = 5 * time.Second
+	maxRestartDelay = 5 * time.Minute
+	stableRun       = time.Minute
+)
+
 type proc struct {
 	svc  services.Service
 	cmd  *exec.Cmd
 	done chan struct{}
 	gen  int // incremented on every start
+
+	started, exited time.Time
+	restartDelay    time.Duration // wait after an exit before starting again
 }
 
 func (p *proc) running() bool {
@@ -91,8 +102,13 @@ func (s *supervisor) reconcile(svcs []services.Service) error {
 			}
 		}
 
-		if p := s.procs[svc.Name]; p.running() && p.svc.Config == svc.Config {
+		p := s.procs[svc.Name]
+		if p.running() && p.svc.Config == svc.Config {
 			continue
+		}
+
+		if p != nil && p.svc.Config == svc.Config && time.Since(p.exited) < p.restartDelay {
+			continue // crashed: wait before starting it again
 		}
 
 		if err := s.start(svc); err != nil {
@@ -139,10 +155,16 @@ func (s *supervisor) start(svc services.Service) error {
 		}
 	}
 
-	gen := 1
+	gen, delay := 1, minRestartDelay
 	if old != nil {
+		crashed := !old.running() && old.svc.Config == svc.Config
 		old.stop()
 		gen = old.gen + 1
+
+		if crashed && old.exited.Sub(old.started) < stableRun {
+			delay = min(old.restartDelay*2, maxRestartDelay)
+			log.Printf("%s keeps exiting (ran %s), next restart in %s at the earliest", svc.Name, old.exited.Sub(old.started).Round(time.Second), delay)
+		}
 	}
 
 	cmd := command(svc.Command, path, svc.Env)
@@ -158,7 +180,7 @@ func (s *supervisor) start(svc services.Service) error {
 		return err
 	}
 
-	p := &proc{svc: svc, cmd: cmd, done: make(chan struct{}), gen: gen}
+	p := &proc{svc: svc, cmd: cmd, done: make(chan struct{}), gen: gen, started: time.Now(), restartDelay: delay}
 	s.procs[svc.Name] = p
 
 	go func() {
@@ -166,6 +188,7 @@ func (s *supervisor) start(svc services.Service) error {
 
 		err := cmd.Wait()
 		log.Printf("%s exited: %v", svc.Name, err)
+		p.exited = time.Now() // read only after done is closed
 		close(p.done)
 	}()
 

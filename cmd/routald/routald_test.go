@@ -114,12 +114,23 @@ func TestSupervisor(t *testing.T) {
 		t.Errorf("generation after change = %d, want 2", g)
 	}
 
-	// exited: started again
+	// exited: started again, but not before the restart delay
 	s.procs["daemon"].stop()
+	_ = s.reconcile([]services.Service{svc("v2", 0)})
+
+	if g := s.generation("daemon"); g != 0 {
+		t.Errorf("restarted before the delay (generation %d)", g)
+	}
+
+	s.procs["daemon"].exited = time.Now().Add(-minRestartDelay)
 	_ = s.reconcile([]services.Service{svc("v2", 0)})
 
 	if g := s.generation("daemon"); g != 3 {
 		t.Errorf("generation after exit = %d, want 3", g)
+	}
+
+	if d := s.procs["daemon"].restartDelay; d != 2*minRestartDelay {
+		t.Errorf("delay after a quick exit = %s, want %s", d, 2*minRestartDelay)
 	}
 
 	// no longer configured: stopped
@@ -385,5 +396,34 @@ func TestCLI(t *testing.T) {
 		if err := run(args); err == nil {
 			t.Errorf("routald %v: no error", args)
 		}
+	}
+}
+
+// A daemon that exits right away is restarted less and less often.
+func TestSupervisorBackoff(t *testing.T) {
+	s := newSupervisor(services.Dirs{State: t.TempDir(), Run: t.TempDir()})
+	crash := services.Service{Name: "crash", File: "crash.conf", Config: "x", Command: []string{"/bin/sh", "-c", "exit 48"}}
+
+	var delays []time.Duration
+
+	for range 8 {
+		_ = s.reconcile([]services.Service{crash})
+		p := s.procs["crash"]
+		<-p.done
+		delays = append(delays, p.restartDelay)
+		p.exited = time.Now().Add(-p.restartDelay) // skip the wait
+	}
+
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, 80 * time.Second, 160 * time.Second, 5 * time.Minute, 5 * time.Minute}
+	if fmt.Sprint(delays) != fmt.Sprint(want) {
+		t.Errorf("delays = %v, want %v", delays, want)
+	}
+
+	// a new config starts at once, with the base delay
+	crash.Config = "y"
+	_ = s.reconcile([]services.Service{crash})
+
+	if d := s.procs["crash"].restartDelay; d != minRestartDelay {
+		t.Errorf("delay after a config change = %s", d)
 	}
 }

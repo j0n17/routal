@@ -1,0 +1,8 @@
+#!/bin/sh
+# http-file <file>: one HTTP exchange on stdin/stdout (socat EXEC): read the request to the end of
+# its headers, answer 200 with the file.
+while IFS= read -r h; do
+	case $h in "" | "$(printf '\r')") break ;; esac
+done
+printf 'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n'
+cat "$1"
