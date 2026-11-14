@@ -233,3 +233,67 @@ type UPnP struct {
 	// InternalSubnets limits the devices allowed to ask (default: any address on the internal links).
 	InternalSubnets []netip.Prefix `yaml:"internalSubnets,omitempty"`
 }
+
+// PrefixDelegation asks the ISP for an IPv6 prefix with DHCPv6 (IA_PD) on a WAN link and gives a
+// /64 of it to each LAN link (kind: PrefixDelegationConfig). RouterAdvertisementConfig without
+// prefixes then announces it.
+type PrefixDelegation struct {
+	Name string `yaml:"name"`
+	// Link is the WAN link the DHCPv6 client runs on (an Ethernet link, or the PPPoE interface).
+	Link string `yaml:"link"`
+	// PrefixLength is a hint for the size wanted (e.g. 56); the ISP decides.
+	PrefixLength int `yaml:"prefixLength,omitempty"`
+	// Subnets gives /64s of the delegated prefix to links; the router takes ::1 on each.
+	Subnets []DelegatedSubnet `yaml:"subnets"`
+	// AcceptRA (default true) keeps accepting router advertisements on the WAN link although
+	// forwarding is on (the ISP's default route usually comes from them).
+	AcceptRA *bool `yaml:"acceptRA,omitempty"`
+}
+
+// DelegatedSubnet is a /64 of the delegated prefix given to a link.
+type DelegatedSubnet struct {
+	Link string `yaml:"link"`
+	// ID is the /64 index in the delegated prefix (a /56 has 256 of them, 0-255).
+	ID uint32 `yaml:"id"`
+}
+
+// PPPoE dials the ISP over Ethernet with pppd (kind: PPPoEConfig). The interface it creates
+// (default ppp0) is used like any link: zones, masquerade, prefix delegation.
+type PPPoE struct {
+	Name         string `yaml:"name"`
+	Link         string `yaml:"link"` // Ethernet link (a VLAN if the ISP wants one, e.g. wan0.832)
+	Interface    string `yaml:"interface,omitempty"`
+	Username     string `yaml:"username"`
+	PasswordFile string `yaml:"passwordFile"` // relative to router.yaml
+	MTU          int    `yaml:"mtu,omitempty"`
+	ServiceName  string `yaml:"serviceName,omitempty"`
+	// DefaultRoute (default true) routes the Internet through the session.
+	DefaultRoute *bool `yaml:"defaultRoute,omitempty"`
+	// IPv6 (default true) negotiates IPv6 on the session (then PrefixDelegationConfig can run on it).
+	IPv6 *bool `yaml:"ipv6,omitempty"`
+
+	Password string `yaml:"-"` // read from PasswordFile
+}
+
+// DynamicDNS keeps a public DNS name pointing at the router's WAN address (kind: DynamicDNSConfig).
+type DynamicDNS struct {
+	Name string `yaml:"name"`
+	// Provider is an inadyn provider (cloudflare.com, duckdns.org, default@dyndns.org, ...) or
+	// "custom" for any dyndns2-style server (server and path).
+	Provider     string   `yaml:"provider"`
+	Hostnames    []string `yaml:"hostnames"`
+	Username     string   `yaml:"username,omitempty"`
+	PasswordFile string   `yaml:"passwordFile,omitempty"` // relative to router.yaml; the API token for most providers
+	Server       string   `yaml:"server,omitempty"`       // custom: host[:port]
+	Path         string   `yaml:"path,omitempty"`         // custom: e.g. /nic/update?hostname=%h&myip=%i
+	// Link takes the address from this link (default: ask the provider what it sees; needed behind
+	// another NAT).
+	Link string `yaml:"link,omitempty"`
+	IPv6 bool   `yaml:"ipv6,omitempty"`
+	// SSL (default true) talks HTTPS to the provider.
+	SSL *bool `yaml:"ssl,omitempty"`
+	// Period between checks (default 5m).
+	Period time.Duration `yaml:"period,omitempty"`
+
+	Password string `yaml:"-"` // read from PasswordFile
+}

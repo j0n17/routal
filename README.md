@@ -14,6 +14,7 @@ machine, and the `routald` system extension turns it into a router.
 | interfaces, VLANs, bonds, bridges, WireGuard, DHCP client, static routes | IP forwarding |
 | ingress firewall for the router itself | zone firewall for forwarded traffic, address/port groups |
 | A/B upgrades, `apply-config --mode try` (auto-rollback) | masquerade / SNAT, port forwards (with NAT loopback), UPnP |
+| | WAN: PPPoE, IPv6 prefix delegation, dynamic DNS |
 | API, `talosctl`, Kubernetes-free mode | DHCP (Kea), caching DNS (Unbound), IPv6 RA (radvd), NTP (chrony), mDNS reflector (Avahi) |
 
 ## Configuration
@@ -52,6 +53,9 @@ peers:
 
 `routald talos-render talos.yaml` prints the documents with the keys inlined; apply its output, never
 commit it. `secrets/` is in `.gitignore` (the examples hold placeholders).
+
+router.yaml does the same for its own secrets (`passwordFile` of PPPoE and dynamic DNS, relative to
+router.yaml): `routald talos-patch` ships each file next to router.yaml on the router.
 
 ### Apply
 
@@ -95,6 +99,9 @@ Every field is in [`examples/reference/router.yaml`](examples/reference/router.y
 | `RouterAdvertisementConfig` | IPv6 SLAAC, optionally DHCPv6 options (`other`) | radvd, Kea |
 | `NTPServerConfig` | time for local networks (does not touch the clock, Talos does) | chrony |
 | `MDNSReflectorConfig` | mDNS/Bonjour across links (printers, AirPlay, Chromecast across VLANs) | Avahi |
+| `PPPoEConfig` | dial the ISP over PPPoE (also on a VLAN); the session is a link (`ppp0`) for zones and NAT | pppd + rp-pppoe |
+| `PrefixDelegationConfig` | IPv6 prefix from the ISP (DHCPv6 IA_PD), a /64 per LAN link, followed by router advertisements | routald |
+| `DynamicDNSConfig` | keep a public name on the WAN address (Cloudflare, DuckDNS, dyndns2...) | inadyn |
 
 Links are kernel names or Talos `LinkAliasConfig` aliases. routald programs its own `inet routal`
 nftables table; Talos keeps `inet talos`. Unknown fields are errors.
@@ -126,9 +133,10 @@ make integration   # data plane in network namespaces: router, LAN clients, NAS 
 make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
 ```
 
-Both run the real routald and daemons with `examples/nas-vpn` and the same 37 checks
+Both run the real routald and daemons with `examples/nas-vpn` and the same 50 checks
 (test/integration/checks.sh): DHCP, SLAAC, DNS, the firewall in IPv4 and IPv6, NAT, reflection,
-UPnP, NTP, mDNS. `make integration` needs only Docker (one privileged container, network
+UPnP, NTP, mDNS, then the WAN against a simulated ISP: IPv6 prefix delegation (Kea) with renewal,
+dynamic DNS, and a PPPoE session (pppoe-server). `make integration` needs only Docker (one privileged container, network
 namespaces). `make clab` runs containerlab in its own container, on Linux or macOS with Docker
 Desktop, one container per node; `KEEP=1 make clab` leaves the lab up to poke at it
 (`docker exec -it clab-routal-router sh`). Talos itself (boot, upgrades, its ingress firewall) was

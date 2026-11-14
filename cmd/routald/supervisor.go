@@ -122,7 +122,8 @@ func (s *supervisor) start(svc services.Service) error {
 	old := s.procs[svc.Name]
 
 	if old == nil || old.svc.Config != svc.Config {
-		if err := os.WriteFile(path+".new", []byte(svc.Config), 0o644); err != nil {
+		// configs may hold secrets (PPPoE password, DNS provider token)
+		if err := os.WriteFile(path+".new", []byte(svc.Config), 0o600); err != nil {
 			return err
 		}
 

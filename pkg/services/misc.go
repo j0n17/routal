@@ -39,7 +39,20 @@ func radvd(cfg *config.Config, e env.Env) (string, []string) {
 
 		prefixes := ra.Prefixes
 		if len(prefixes) == 0 {
-			prefixes = []netip.Prefix{netip.MustParsePrefix("::/64")}
+			// the /64s on the link now (ULA, delegated prefix): a new delegated prefix changes the
+			// config, and routald restarts radvd with it
+			for _, p := range e.Addrs(ra.Link) {
+				if a := p.Addr(); a.Is6() && !a.IsLinkLocalUnicast() && p.Bits() == 64 {
+					prefixes = append(prefixes, p.Masked())
+				}
+			}
+
+			slices.SortFunc(prefixes, func(a, b netip.Prefix) int { return a.Addr().Compare(b.Addr()) })
+			prefixes = slices.Compact(prefixes)
+		}
+
+		if len(prefixes) == 0 {
+			prefixes = []netip.Prefix{netip.MustParsePrefix("::/64")} // whatever the link gets
 		}
 
 		for _, p := range prefixes {
@@ -59,7 +72,7 @@ func radvd(cfg *config.Config, e env.Env) (string, []string) {
 
 			if a, ok := linkAddr(e, ra.Link, within, false); ok {
 				dns = []netip.Addr{a}
-			} else {
+			} else if !e.Offline {
 				warn = append(warn, fmt.Sprintf("RA %q: no IPv6 address on %s yet to announce as DNS server", ra.Name, ra.Link))
 			}
 		}

@@ -1,0 +1,4 @@
+#!/bin/sh
+# pppd for the test ISP's pppoe-server: pppoe-server starts pppd with its standard descriptors
+# closed, and pppd then fails silently; give it a stderr.
+exec /usr/sbin/pppd "$@" 2>>/tmp/pppd-server.stderr

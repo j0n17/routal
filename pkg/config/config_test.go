@@ -98,3 +98,34 @@ func TestLoadEmptyDocuments(t *testing.T) {
 		t.Errorf("defaults not applied: %+v", cfg.Firewall)
 	}
 }
+
+func TestWANErrors(t *testing.T) {
+	for name, doc := range map[string]string{
+		"secret outside":   "kind: PPPoEConfig\nname: a\nlink: wan0\nusername: u\npasswordFile: ../pass\n",
+		"absolute secret":  "kind: PPPoEConfig\nname: a\nlink: wan0\nusername: u\npasswordFile: /etc/pass\n",
+		"quote in user":    "kind: PPPoEConfig\nname: a\nlink: wan0\nusername: 'u\"x'\npasswordFile: p\n",
+		"pd on wan":        "kind: PrefixDelegationConfig\nname: a\nlink: wan0\nsubnets: [{link: wan0, id: 0}]\n",
+		"pd id too big":    "kind: PrefixDelegationConfig\nname: a\nlink: wan0\nprefixLength: 60\nsubnets: [{link: lan0, id: 16}]\n",
+		"ddns custom":      "kind: DynamicDNSConfig\nname: a\nprovider: custom\nhostnames: [x.example.org]\n",
+		"ddns no hostname": "kind: DynamicDNSConfig\nname: a\nprovider: duckdns.org\n",
+	} {
+		if _, err := config.Load([]byte("apiVersion: v1alpha1\n" + doc)); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}
+
+func TestSecretFileRead(t *testing.T) {
+	cfg, err := config.LoadFile("../../examples/reference/router.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.PPPoE[0].Password != "changeme" || cfg.PPPoE[0].Interface != "ppp0" || cfg.PPPoE[0].MTU != 1492 {
+		t.Errorf("PPPoE = %+v", cfg.PPPoE[0])
+	}
+
+	if _, err := config.Load([]byte("apiVersion: v1alpha1\nkind: PPPoEConfig\nname: a\nlink: wan0\nusername: u\npasswordFile: missing.pass\n")); err == nil {
+		t.Error("missing secret file accepted")
+	}
+}

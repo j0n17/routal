@@ -2,7 +2,7 @@
 # This file is valid as is (`routald validate`, `make check`); it goes with talos.yaml next to it.
 #
 # Network:
-#   wan0     ISP (DHCP from Talos)
+#   ppp0     ISP: PPPoE on VLAN 832 of wan0 (wan832, talos.yaml), IPv6 prefix delegated over it
 #   lan0     192.168.1.0/24   fd00:1::/64    trusted LAN
 #   guest0   192.168.20.0/24                 guest VLAN 20 on lan0
 #   srv0     192.168.30.0/24  fd00:30::/64   servers VLAN 30 on lan0 (NAS)
@@ -27,7 +27,7 @@ logBlocked: true      # log what forwardDefault drops (kernel log, prefix "routa
 apiVersion: v1alpha1
 kind: FirewallZoneConfig
 name: wan
-links: [wan0]
+links: [ppp0] # the PPPoE session (PPPoEConfig below)
 ---
 apiVersion: v1alpha1
 kind: FirewallZoneConfig
@@ -210,15 +210,15 @@ ports: [53]
 apiVersion: v1alpha1
 kind: MasqueradeConfig
 name: out
-outLink: wan0
-sourceSubnets: [192.168.1.0/24, 192.168.20.0/24, 192.168.30.0/24, 10.8.0.0/24] # default: everything leaving wan0
+outLink: ppp0
+sourceSubnets: [192.168.1.0/24, 192.168.20.0/24, 192.168.30.0/24, 10.8.0.0/24] # default: everything leaving ppp0
 # snatAddress: 203.0.113.10 # fixed source address instead of the link's (same family as sourceSubnets)
 ---
 # --- Destination NAT ------------------------------------------------------------
 apiVersion: v1alpha1
 kind: PortForwardConfig
 name: nas-https
-inLink: wan0
+inLink: ppp0
 protocol: tcp          # tcp | udp
 ports: [8443]          # one port, a range, or several
 toAddress: 192.168.30.10
@@ -229,7 +229,7 @@ reflection: true       # default true: also works from inside with the public ad
 # Devices open their own forwards (UPnP IGD, NAT-PMP, PCP), only to their own address.
 apiVersion: v1alpha1
 kind: UPnPConfig
-externalLink: wan0
+externalLink: ppp0
 internalLinks: [lan0]
 externalPorts: ["1024-49151"]        # default; must not include the Talos API (50000-50001)
 internalSubnets: [192.168.1.0/24]    # default: the subnets of the internal links
@@ -292,7 +292,8 @@ apiVersion: v1alpha1
 kind: RouterAdvertisementConfig
 name: lan
 link: lan0
-prefixes: [fd00:1::/64]   # default: every /64 on the link (follows a delegated prefix)
+# prefixes: [fd00:1::/64] # default: every /64 on the link: here the ULA and the delegated /64,
+#                         # which routald follows when the ISP changes it
 routerLifetime: 30m       # default 30m
 # dnsServers: [fd00:1::1] # default: the router when DNSServerConfig listens on the link
 # managed: true           # stateful DHCPv6: not supported yet
@@ -304,6 +305,11 @@ link: srv0
 prefixes: [fd00:30::/64]
 other: true               # also serve DNS options with stateless DHCPv6 (Kea); needs prefixes
 ---
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: guest
+link: guest0 # guests get the delegated /64 number 20, nothing local
+---
 # --- NTP server (chrony), one at most -----------------------------------------------------
 apiVersion: v1alpha1
 kind: NTPServerConfig
@@ -314,3 +320,52 @@ upstreams: [time.cloudflare.com, pool.ntp.org] # default: time.cloudflare.com (t
 apiVersion: v1alpha1
 kind: MDNSReflectorConfig
 links: [lan0, srv0] # at least two; the firewall must allow udp 5353 from their zones
+---
+# --- WAN: PPPoE (pppd, user-space PPPoE: the Talos kernel has no PPPoE module) ---------------
+apiVersion: v1alpha1
+kind: PPPoEConfig
+name: isp
+link: wan832                         # Ethernet link: the ISP's VLAN (VLANConfig in talos.yaml)
+interface: ppp0                      # default ppp0: use this name in zones, NAT, prefix delegation
+username: user@isp.example
+passwordFile: secrets/pppoe-isp.pass # relative to router.yaml; talos-patch ships it next to it
+mtu: 1492                            # default 1492; TCP MSS is clamped to the route MTU
+# serviceName: isp                   # only if the ISP asks for one
+defaultRoute: true                   # default true
+ipv6: true                           # default true: IPv6 on the session, for prefix delegation
+---
+# --- WAN: IPv6 prefix delegation (DHCPv6 IA_PD client in routald) --------------------------------
+apiVersion: v1alpha1
+kind: PrefixDelegationConfig
+name: isp
+link: ppp0                # the WAN link the client runs on
+prefixLength: 56          # a hint; the ISP decides
+subnets:                  # /64s of the delegated prefix; the router takes ::1 on each
+  - link: lan0
+    id: 0                 # 2001:db8:aa00::/56 -> lan0 2001:db8:aa00::/64
+  - link: guest0
+    id: 20                # -> guest0 2001:db8:aa00:14::/64 (id is the /64 index: 20 = 0x14)
+acceptRA: true            # default true: keep the ISP's default route from its RAs
+---
+# --- Dynamic DNS (inadyn) ------------------------------------------------------------------------
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: home
+provider: cloudflare.com          # an inadyn provider: cloudflare.com, duckdns.org, default@dyndns.org, ...
+hostnames: [home.example.org]
+username: example.org             # Cloudflare: the zone
+passwordFile: secrets/ddns-cloudflare.token # the API token
+link: ppp0                        # take the address of this link (default: ask the provider)
+ipv6: false                       # update AAAA instead of A
+ssl: true                         # default true
+period: 5m                        # default 5m
+---
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: backup
+provider: custom                  # any dyndns2-style server
+server: dyn.example.net
+path: /nic/update?hostname=%h&myip=%i
+hostnames: [router.dyn.example.net]
+username: me
+passwordFile: secrets/ddns-custom.pass

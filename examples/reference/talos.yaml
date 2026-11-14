@@ -34,14 +34,19 @@ name: lan0
 selector:
   match: mac(link.permanent_addr) == "52:54:00:00:00:02"
 ---
-# WAN: address and default route from the ISP.
+# WAN: the ISP wants PPPoE on VLAN 832 (routald dials it: PPPoEConfig in router.yaml).
+# With a DHCP ISP instead: `kind: DHCPv4Config` / `kind: DHCPv6Config` with `name: wan0`.
 apiVersion: v1alpha1
-kind: DHCPv4Config
+kind: LinkConfig
 name: wan0
+up: true
 ---
 apiVersion: v1alpha1
-kind: DHCPv6Config
-name: wan0
+kind: VLANConfig
+name: wan832
+vlanID: 832
+parent: wan0
+up: true
 ---
 # LAN: static addresses, plus a static route to a network behind another router.
 apiVersion: v1alpha1

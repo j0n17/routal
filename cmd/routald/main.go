@@ -5,6 +5,7 @@
 //	routald render <router.yaml>                      print the nftables ruleset
 //	routald render-services <router.yaml> <dir>       write the daemon configs (Kea, Unbound, radvd...) to dir
 //	routald talos-patch [-current mc.yaml] <router.yaml>  print the Talos machine config patch
+//	routald addr [-6] <link>                          print the link's public address (dynamic DNS)
 //	routald talos-render <talos.yaml>                 print talos.yaml with privateKeyFile & co. resolved
 package main
 
@@ -33,7 +34,7 @@ func main() {
 }
 
 func usage() error {
-	return fmt.Errorf("usage: routald run|validate|render|render-services|talos-patch|talos-render [args]")
+	return fmt.Errorf("usage: routald run|validate|render|render-services|talos-patch|talos-render|addr [args]")
 }
 
 func run(args []string) error {
@@ -62,7 +63,29 @@ func run(args []string) error {
 			dirs:       dirs,
 			services:   newSupervisor(dirs),
 			names:      &leaseNames{ctl: "/usr/sbin/unbound-control", dirs: dirs},
+			pd:         &pdManager{stateDir: dirs.State},
 		}).run(ctx)
+	}
+
+	if cmd == "addr" {
+		fs := flag.NewFlagSet("addr", flag.ExitOnError)
+		v6 := fs.Bool("6", false, "IPv6 (global, not ULA) instead of IPv4")
+		_ = fs.Parse(args)
+
+		if fs.NArg() != 1 {
+			return usage()
+		}
+
+		for _, p := range env.Host().Addrs(fs.Arg(0)) {
+			a := p.Addr()
+			if a.Is4() != *v6 && !a.IsLinkLocalUnicast() && !(a.Is6() && a.IsPrivate()) {
+				fmt.Println(a)
+
+				return nil
+			}
+		}
+
+		return fmt.Errorf("no address on %s", fs.Arg(0))
 	}
 
 	if cmd == "talos-render" {
@@ -121,7 +144,7 @@ func run(args []string) error {
 		return err
 	}
 
-	cfg, err := config.Load(raw)
+	cfg, err := config.LoadDir(raw, filepath.Dir(args[0]))
 	if err != nil {
 		return fmt.Errorf("%s: %w", args[0], err)
 	}

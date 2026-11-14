@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/netip"
 	"regexp"
+	"strings"
+	"time"
 )
 
 var (
@@ -333,7 +335,146 @@ func (cfg *Config) Validate() error {
 		}
 	}
 
+	errs = append(errs, cfg.validateWAN(checkName, checkLink)...)
+
 	return errors.Join(errs...)
+}
+
+// secretRe: secret files are relative to router.yaml and below it (talos-patch ships them next to it)
+var secretRe = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_./-]*$`)
+
+func checkSecretPath(where, p string) error {
+	if !secretRe.MatchString(p) || strings.Contains(p, "..") {
+		return fmt.Errorf("%s: secret file %q must be a relative path below router.yaml's directory", where, p)
+	}
+
+	return nil
+}
+
+func (cfg *Config) validateWAN(checkName func(kind, name string), checkLink func(where, link string)) []error {
+	var errs []error
+
+	fail := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+
+	pdLinks := map[string]bool{}
+
+	for _, pd := range cfg.PrefixDelegations {
+		where := fmt.Sprintf("PrefixDelegationConfig %q", pd.Name)
+		checkName("PrefixDelegationConfig", pd.Name)
+		checkLink(where, pd.Link)
+
+		if pdLinks[pd.Link] {
+			fail("%s: link %q already has prefix delegation", where, pd.Link)
+		}
+
+		pdLinks[pd.Link] = true
+
+		if pd.PrefixLength != 0 && (pd.PrefixLength < 32 || pd.PrefixLength > 64) {
+			fail("%s: prefixLength must be between 32 and 64", where)
+		}
+
+		if len(pd.Subnets) == 0 {
+			fail("%s: subnets must not be empty", where)
+		}
+
+		ids, links := map[uint32]bool{}, map[string]bool{}
+
+		for _, s := range pd.Subnets {
+			checkLink(where, s.Link)
+
+			if s.Link == pd.Link {
+				fail("%s: the WAN link %q cannot get a delegated subnet", where, s.Link)
+			}
+
+			if ids[s.ID] || links[s.Link] {
+				fail("%s: subnet id %d or link %q used twice", where, s.ID, s.Link)
+			}
+
+			ids[s.ID], links[s.Link] = true, true
+
+			if pd.PrefixLength != 0 && s.ID >= 1<<(64-pd.PrefixLength) {
+				fail("%s: subnet id %d does not fit in a /%d", where, s.ID, pd.PrefixLength)
+			}
+		}
+	}
+
+	ifaces := map[string]bool{}
+
+	for _, p := range cfg.PPPoE {
+		where := fmt.Sprintf("PPPoEConfig %q", p.Name)
+		checkName("PPPoEConfig", p.Name)
+		checkLink(where, p.Link)
+		checkLink(where, p.Interface)
+
+		if ifaces[p.Interface] {
+			fail("%s: interface %q is used by another PPPoEConfig", where, p.Interface)
+		}
+
+		ifaces[p.Interface] = true
+
+		if p.Username == "" || strings.ContainsAny(p.Username, "\"\n\\") {
+			fail("%s: username is required (no quotes, backslashes or newlines)", where)
+		}
+
+		if p.PasswordFile == "" {
+			fail("%s: passwordFile is required", where)
+		} else if err := checkSecretPath(where, p.PasswordFile); err != nil {
+			errs = append(errs, err)
+		}
+
+		if p.MTU < 1280 || p.MTU > 1500 {
+			fail("%s: mtu must be between 1280 and 1500", where)
+		}
+
+		if strings.ContainsAny(p.ServiceName, "\"\n\\ ") {
+			fail("%s: invalid serviceName", where)
+		}
+	}
+
+	for _, d := range cfg.DynamicDNS {
+		where := fmt.Sprintf("DynamicDNSConfig %q", d.Name)
+		checkName("DynamicDNSConfig", d.Name)
+
+		if d.Provider == "" || strings.ContainsAny(d.Provider, "\" {}\n") {
+			fail("%s: provider is required (an inadyn provider name, or custom)", where)
+		}
+
+		if d.Provider == "custom" && (d.Server == "" || d.Path == "") {
+			fail("%s: provider custom needs server and path", where)
+		}
+
+		if len(d.Hostnames) == 0 {
+			fail("%s: hostnames must not be empty", where)
+		}
+
+		for _, h := range d.Hostnames {
+			if !hostRe.MatchString(h) {
+				fail("%s: invalid hostname %q", where, h)
+			}
+		}
+
+		for _, v := range []string{d.Username, d.Server, d.Path} {
+			if strings.ContainsAny(v, "\"\n") {
+				fail("%s: username, server and path cannot contain quotes or newlines", where)
+			}
+		}
+
+		if d.PasswordFile != "" {
+			if err := checkSecretPath(where, d.PasswordFile); err != nil {
+				errs = append(errs, err)
+			}
+		}
+
+		if d.Link != "" {
+			checkLink(where, d.Link)
+		}
+
+		if d.Period < time.Minute {
+			fail("%s: period must be at least 1m", where)
+		}
+	}
+
+	return errs
 }
 
 func checkProtoPorts(where string, proto Protocol, ports []PortRange, required bool) []error {

@@ -12,6 +12,9 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"os"
+	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -77,17 +80,30 @@ type deleteDoc struct {
 // the machine config the patch will be applied to (multi-document YAML, e.g. from
 // `talosctl get mc -o yaml`); nil skips the cleanup of stale rules.
 func Generate(raw []byte, cfg *config.Config, current []byte) ([]byte, error) {
-	docs := []any{
-		extensionServiceConfig{
-			APIVersion: "v1alpha1",
-			Kind:       "ExtensionServiceConfig",
-			Name:       ServiceName,
-			ConfigFiles: []configFile{{
-				Content:   literal(strings.TrimRight(string(raw), "\n") + "\n"),
-				MountPath: ConfigPath,
-			}},
-		},
+	esc := extensionServiceConfig{
+		APIVersion: "v1alpha1",
+		Kind:       "ExtensionServiceConfig",
+		Name:       ServiceName,
+		ConfigFiles: []configFile{{
+			Content:   literal(strings.TrimRight(string(raw), "\n") + "\n"),
+			MountPath: ConfigPath,
+		}},
 	}
+
+	// secret files travel next to router.yaml, at the same relative path
+	for _, rel := range cfg.SecretFiles() {
+		secret, err := os.ReadFile(filepath.Join(cfg.BaseDir, rel))
+		if err != nil {
+			return nil, err
+		}
+
+		esc.ConfigFiles = append(esc.ConfigFiles, configFile{
+			Content:   literal(strings.TrimRight(string(secret), "\n") + "\n"),
+			MountPath: path.Join(path.Dir(ConfigPath), rel),
+		})
+	}
+
+	docs := []any{esc}
 
 	for _, r := range cfg.Rules {
 		if r.To != config.SelfZone || r.Action != config.ActionAccept {
@@ -113,6 +129,13 @@ func Generate(raw []byte, cfg *config.Config, current []byte) ([]byte, error) {
 			ruleFor(RulePrefix+"upnp-mappings-udp", config.ProtocolUDP, u.ExternalPorts, nil),
 			ruleFor(RulePrefix+"upnp-mappings-tcp", config.ProtocolTCP, u.ExternalPorts, nil),
 		)
+	}
+
+	// DHCPv6 prefix delegation: the server answers from its link-local address to our port 546,
+	// which conntrack does not match with the multicast Solicit
+	if len(cfg.PrefixDelegations) > 0 {
+		docs = append(docs, ruleFor(RulePrefix+"dhcpv6-client", config.ProtocolUDP,
+			[]config.PortRange{{Lo: 546, Hi: 546}}, []netip.Prefix{netip.MustParsePrefix("fe80::/10")}))
 	}
 
 	if current != nil {

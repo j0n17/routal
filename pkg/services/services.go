@@ -7,6 +7,8 @@
 //	chronyd       NTPServerConfig
 //	avahi-daemon  MDNSReflectorConfig
 //	miniupnpd     UPnPConfig
+//	pppd          PPPoEConfig (one per session)
+//	inadyn        DynamicDNSConfig
 package services
 
 import (
@@ -98,6 +100,21 @@ func Render(cfg *config.Config, e env.Env, d Dirs) []Service {
 		out = append(out, Service{
 			Name: "miniupnpd", File: "miniupnpd.conf", Config: conf, Warnings: warn,
 			Command: []string{"/usr/sbin/miniupnpd", "-d", "-f", "{conf}", "-P", d.Run + "/miniupnpd.pid"},
+		})
+	}
+
+	for _, p := range cfg.PPPoE {
+		out = append(out, Service{
+			Name: "pppd-" + p.Name, File: "pppoe-" + p.Name + ".options", Config: pppd(p, e),
+			Command: []string{"/usr/sbin/pppd", "file", "{conf}"},
+		})
+	}
+
+	if len(cfg.DynamicDNS) > 0 {
+		out = append(out, Service{
+			Name: "inadyn", File: "inadyn.conf", Config: inadyn(cfg),
+			Command: []string{"/usr/sbin/inadyn", "--foreground", "-f", "{conf}", "--cache-dir", d.State + "/inadyn", "-P", d.Run + "/inadyn.pid"},
+			Test:    []string{"/usr/sbin/inadyn", "--check-config", "-f", "{conf}"},
 		})
 	}
 

@@ -30,6 +30,7 @@ type agent struct {
 	dirs       services.Dirs
 	services   *supervisor
 	names      *leaseNames
+	pd         *pdManager
 
 	applied [32]byte
 }
@@ -49,6 +50,7 @@ func (a *agent) run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			a.services.stopAll()
+			a.pd.stopAll()
 			log.Printf("routald stopping, rules left in place")
 
 			return nil
@@ -64,6 +66,8 @@ func (a *agent) reconcile() error {
 	}
 
 	e := env.Host()
+
+	a.pd.reconcile(cfg)
 
 	errs := []error{a.applyFirewall(cfg, e)}
 	errs = append(errs, a.services.reconcile(services.Render(cfg, e, a.dirs)))

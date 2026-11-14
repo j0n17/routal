@@ -289,3 +289,18 @@ internalLinks: [lan0]
 		t.Error("reflection rendered without a known address")
 	}
 }
+
+func TestRenderPPPoEClamp(t *testing.T) {
+	cfg, err := config.LoadFile("../../examples/reference/router.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := nft.Render(cfg, env.Static())
+	want := "ct state invalid drop"
+	clamp := `oifname "ppp0" tcp flags syn / syn,rst tcp option maxseg size set rt mtu comment "mss isp"`
+
+	if i, j := strings.Index(out, clamp), strings.Index(out, want); i < 0 || i > j {
+		t.Errorf("MSS clamp missing or after the established accept:\n%s", out)
+	}
+}

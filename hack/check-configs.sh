@@ -21,6 +21,7 @@ for f in /src/examples/*/router.yaml; do
       unbound.conf)   cmd="unbound-checkconf $c" ;;
       radvd.conf)     cmd="radvd -c -C $c" ;;
       chrony.conf)    cmd="chronyd -p -f $c" ;;
+      inadyn.conf)    cmd="inadyn --check-config -f $c" ;;
       *) continue ;;
     esac
     if log=$($cmd 2>&1); then echo "$ex $(basename "$c"): OK"; else echo "$ex $(basename "$c"): FAILED"; echo "$log" | tail -5; fail=1; fi

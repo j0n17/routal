@@ -175,6 +175,12 @@ func (r renderer) forward(b *strings.Builder) {
 	fw := r.cfg.Firewall
 
 	fmt.Fprintf(b, "\tchain forward {\n\t\ttype filter hook forward priority filter; policy %s;\n", verdict(fw.ForwardDefault))
+	// PPPoE lowers the MTU: clamp the TCP MSS of SYNs (and SYN-ACKs of inside servers) leaving
+	// through it, or sites with broken path MTU discovery hang
+	for _, p := range r.cfg.PPPoE {
+		fmt.Fprintf(b, "\t\toifname %q tcp flags syn / syn,rst tcp option maxseg size set rt mtu comment %q\n", p.Interface, "mss "+p.Name)
+	}
+
 	b.WriteString("\t\tct state established,related accept\n\t\tct state invalid drop\n")
 
 	// UPnP mappings are DNAT rules miniupnpd adds in its own table; accept what they translated.

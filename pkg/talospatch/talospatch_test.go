@@ -150,3 +150,29 @@ spec: |
 		t.Errorf("stale rule not deleted:\n%s", out)
 	}
 }
+
+func TestGenerateSecretsAndPD(t *testing.T) {
+	cfg, err := config.LoadFile("../../examples/reference/router.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw, _ := os.ReadFile("../../examples/reference/router.yaml")
+
+	out, err := talospatch.Generate(raw, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := string(out)
+
+	for _, want := range []string{
+		"  - content: |\n      # placeholder: the PPPoE password from the ISP\n      changeme\n    mountPath: /etc/routal/secrets/pppoe-isp.pass\n",
+		"mountPath: /etc/routal/secrets/ddns-custom.pass",
+		"name: routal-dhcpv6-client\nportSelector:\n  ports:\n    - 546\n  protocol: udp\ningress:\n  - subnet: fe80::/10\n",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in:\n%s", want, s)
+		}
+	}
+}

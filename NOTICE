@@ -8,6 +8,12 @@ The extension image bundles unmodified Alpine Linux packages and their libraries
 run as separate programs: nftables (GPL-2.0), Kea (MPL-2.0), Unbound
 (BSD-3-Clause), radvd (BSD-style), chrony (GPL-2.0) and Avahi (LGPL-2.1). Their
 sources are available from https://pkgs.alpinelinux.org and the upstream projects.
+Also: ppp (BSD-style and GPL-2.0 parts), rp-pppoe (GPL-2.0) and inadyn (GPL-2.0).
 
 It also bundles miniupnpd (BSD-3-Clause, Copyright (c) Thomas Bernard), built
 unmodified from https://github.com/miniupnp/miniupnp with its nftables backend.
+
+routald includes these Go modules: gopkg.in/yaml.v3 (MIT and Apache-2.0),
+github.com/insomniacslk/dhcp (BSD-3-Clause), github.com/vishvananda/netlink and
+github.com/vishvananda/netns (Apache-2.0), golang.org/x/sys (BSD-3-Clause), and their
+dependencies; their licenses are in their sources.

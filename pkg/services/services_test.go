@@ -170,3 +170,65 @@ func TestRecordReverse(t *testing.T) {
 		t.Errorf("PTR = %s", got)
 	}
 }
+
+func TestRenderWAN(t *testing.T) {
+	svcs := render(t, "../../examples/reference/router.yaml", env.Static())
+
+	for name, wants := range map[string][]string{
+		"pppd-isp": {
+			`pty "/usr/sbin/pppoe -I wan832 -T 80"`, "ifname ppp0", `user "user@isp.example"`,
+			`password "changeme"`, "mtu 1492", "defaultroute", "replacedefaultroute", "+ipv6", "nodetach",
+		},
+		"inadyn": {
+			"period = 300", "provider cloudflare.com:1 {", `username = "example.org"`, `password = "changeme"`,
+			`hostname = { "home.example.org" }`, `checkip-command = "/usr/local/bin/routald addr ppp0"`,
+			"custom routal-backup:2 {", `ddns-server = "dyn.example.net"`, `ddns-path = "/nic/update?hostname=%h&myip=%i"`,
+		},
+	} {
+		s, ok := svcs[name]
+		if !ok {
+			t.Fatalf("%s not rendered", name)
+		}
+
+		for _, w := range wants {
+			if !strings.Contains(s.Config, w) {
+				t.Errorf("%s: missing %q in:\n%s", name, w, s.Config)
+			}
+		}
+	}
+}
+
+// Without explicit prefixes, radvd announces the /64s on the link, so a new delegated prefix
+// changes its config (and routald restarts it).
+func TestRadvdFollowsDelegatedPrefix(t *testing.T) {
+	cfg, err := config.Load([]byte("apiVersion: v1alpha1\nkind: RouterAdvertisementConfig\nname: lan\nlink: lan0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conf := func(addrs ...string) string {
+		e := env.Static()
+		e.Offline = false
+		e.Addrs = func(string) []netip.Prefix {
+			var out []netip.Prefix
+			for _, a := range addrs {
+				out = append(out, netip.MustParsePrefix(a))
+			}
+
+			return out
+		}
+
+		return services.Render(cfg, e, services.DefaultDirs)[0].Config
+	}
+
+	before := conf("fd00:1::1/64", "fe80::1/64")
+	after := conf("fd00:1::1/64", "2001:db8:aa00::1/64", "fe80::1/64")
+
+	if !strings.Contains(before, "prefix fd00:1::/64 {") || strings.Contains(before, "fe80") {
+		t.Errorf("before:\n%s", before)
+	}
+
+	if !strings.Contains(after, "prefix 2001:db8:aa00::/64 {") || !strings.Contains(after, "prefix fd00:1::/64 {") {
+		t.Errorf("after:\n%s", after)
+	}
+}

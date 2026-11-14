@@ -114,6 +114,26 @@ namespaces, `make clab` on test/clab/routal.clab.yml (one container per node, a 
 the LAN switch, containerlab's management network with its default routes removed). Next nodes
 for the lab: an ISP with PPPoE (accel-ppp) and DHCPv6-PD once routald has the clients.
 
+## WAN (2026-11-14)
+- PPPoE: pppd with rp-pppoe's user-space `pppoe` through pppd's pty (the Talos kernel has PPP and
+  PPP_ASYNC, not PPPOE). One supervised pppd per PPPoEConfig; its options file holds the password
+  and is written 0600. TCP MSS is clamped to the route MTU on SYNs leaving the session.
+- Prefix delegation: a DHCPv6 client in routald (pkg/pd for the protocol, cmd/routald/pd.go for the
+  loop): Solicit/Request, Renew at T1, Rebind at T2, start over on expiry. DUID-LL from the link's
+  MAC (stable without state), or a persisted DUID-UUID on PPP links. Each subnet link gets
+  `<prefix>:<id>::1/64` with the lease lifetimes (the kernel drops it if routald is gone); the rest
+  of the prefix is routed `unreachable` so it never loops back to the ISP. accept_ra=2 on the WAN
+  link keeps the ISP's default route with forwarding on. RouterAdvertisementConfig without
+  prefixes renders the /64s present on the link, so radvd restarts with a new delegated prefix and
+  announces it with the address lifetimes. talos-patch opens udp 546 from fe80::/10 in Talos.
+- Dynamic DNS: inadyn, one provider section per DynamicDNSConfig; the address comes from the link
+  (`routald addr`) rather than a web service when `link` is set.
+- Secrets of router.yaml (`passwordFile`) are relative to it; talos-patch adds each file as another
+  ExtensionServiceConfig configFile next to /etc/routal/router.yaml.
+- Tested in the namespace and containerlab labs against a simulated ISP. Not yet tested on Talos:
+  that /dev/ppp is usable from the extension container, and that Talos leaves the addresses and
+  the unreachable route routald adds alone.
+
 ## Talos kernel (v1.15.0-beta.0), checked on the VM
 | Feature | Kernel | Consequence |
 |---|---|---|
@@ -124,9 +144,9 @@ for the lab: an ISP with PPPoE (accel-ppp) and DHCPv6-PD once routald has the cl
 
 ## Next
 1. Kernel options upstream (siderolabs/pkgs, as modules): `PPPOE`, `NF_FLOW_TABLE(_INET)` + `NFT_FLOW_OFFLOAD`, `NET_SCH_CAKE`.
-2. WAN: DHCPv6 prefix delegation client (Talos has none; in routald, assigning a /64 per LAN link,
-   radvd's `prefix ::/64` then announces it), PPPoE (pppd + rp-pppoe user space until kernel PPPoE),
-   ISP DHCP options (e.g. option 90, VLAN priority).
+2. WAN: test PPPoE and prefix delegation on Talos (VM); prefix delegation over PPPoE in the lab;
+   ISP DHCP options (e.g. option 90, VLAN priority); deprecate the old prefix (lifetime 0) when the
+   ISP changes it; DNS blocklists (Unbound local zones, "AdGuard-like").
 3. SQM: `SQMConfig` with HTB + fq_codel on the WAN (egress) and an ifb (ingress); cake when available.
 4. Flowtables offload once the kernel has it (`flowtable` + `flow add @ft` for established flows).
 5. FQDN-based rules: Unbound has no nftset; options are a dnsmasq forwarder with nftset (custom build)

@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -29,21 +31,33 @@ type Config struct {
 	NTPServer            *NTPServer
 	MDNSReflector        *MDNSReflector
 	UPnP                 *UPnP
+	PrefixDelegations    []PrefixDelegation
+	PPPoE                []PPPoE
+	DynamicDNS           []DynamicDNS
+
+	// BaseDir is the directory of router.yaml: secret files are relative to it.
+	BaseDir string
 }
 
-// LoadFile reads, parses and validates a router config file.
+// LoadFile reads, parses and validates a router config file; secret files are relative to it.
 func LoadFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return Load(data)
+	return LoadDir(data, filepath.Dir(path))
 }
 
-// Load parses a multi-document YAML router config, applies defaults and validates it.
+// Load parses a multi-document YAML router config, applies defaults and validates it. Secret
+// files are relative to the current directory.
 func Load(data []byte) (*Config, error) {
-	cfg := &Config{}
+	return LoadDir(data, ".")
+}
+
+// LoadDir is Load with secret files relative to dir.
+func LoadDir(data []byte, dir string) (*Config, error) {
+	cfg := &Config{BaseDir: dir}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 
 	for i := 1; ; i++ {
@@ -73,7 +87,66 @@ func Load(data []byte) (*Config, error) {
 		return nil, err
 	}
 
+	if err := cfg.readSecrets(); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
+}
+
+// SecretFiles returns the secret files the config references, relative to BaseDir.
+func (cfg *Config) SecretFiles() []string {
+	var out []string
+
+	for _, p := range cfg.PPPoE {
+		out = append(out, p.PasswordFile)
+	}
+
+	for _, d := range cfg.DynamicDNS {
+		if d.PasswordFile != "" {
+			out = append(out, d.PasswordFile)
+		}
+	}
+
+	return out
+}
+
+func (cfg *Config) readSecrets() error {
+	read := func(where, rel string) (string, error) {
+		raw, err := os.ReadFile(filepath.Join(cfg.BaseDir, rel))
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", where, err)
+		}
+
+		// the first line that is not blank or a # comment
+		for _, line := range strings.Split(string(raw), "\n") {
+			if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+				return line, nil
+			}
+		}
+
+		return "", fmt.Errorf("%s: %s is empty", where, rel)
+	}
+
+	var err error
+
+	for i := range cfg.PPPoE {
+		p := &cfg.PPPoE[i]
+		if p.Password, err = read("PPPoEConfig "+p.Name, p.PasswordFile); err != nil {
+			return err
+		}
+	}
+
+	for i := range cfg.DynamicDNS {
+		d := &cfg.DynamicDNS[i]
+		if d.PasswordFile != "" {
+			if d.Password, err = read("DynamicDNSConfig "+d.Name, d.PasswordFile); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (cfg *Config) add(node *yaml.Node) error {
@@ -121,6 +194,12 @@ func (cfg *Config) add(node *yaml.Node) error {
 		return singleton(node, &cfg.MDNSReflector, header.Kind)
 	case "UPnPConfig":
 		return singleton(node, &cfg.UPnP, header.Kind)
+	case "PrefixDelegationConfig":
+		return appendDoc(node, &cfg.PrefixDelegations)
+	case "PPPoEConfig":
+		return appendDoc(node, &cfg.PPPoE)
+	case "DynamicDNSConfig":
+		return appendDoc(node, &cfg.DynamicDNS)
 	case "FirewallZoneConfig":
 		return appendDoc(node, &cfg.Zones)
 	case "FirewallRuleConfig":
@@ -248,6 +327,42 @@ func (cfg *Config) applyDefaults() {
 
 	if cfg.UPnP != nil && len(cfg.UPnP.ExternalPorts) == 0 {
 		cfg.UPnP.ExternalPorts = []PortRange{{Lo: 1024, Hi: 49151}}
+	}
+
+	for i := range cfg.PrefixDelegations {
+		if cfg.PrefixDelegations[i].AcceptRA == nil {
+			cfg.PrefixDelegations[i].AcceptRA = new(true)
+		}
+	}
+
+	for i := range cfg.PPPoE {
+		p := &cfg.PPPoE[i]
+		if p.Interface == "" {
+			p.Interface = "ppp0"
+		}
+
+		if p.MTU == 0 {
+			p.MTU = 1492
+		}
+
+		if p.DefaultRoute == nil {
+			p.DefaultRoute = new(true)
+		}
+
+		if p.IPv6 == nil {
+			p.IPv6 = new(true)
+		}
+	}
+
+	for i := range cfg.DynamicDNS {
+		d := &cfg.DynamicDNS[i]
+		if d.SSL == nil {
+			d.SSL = new(true)
+		}
+
+		if d.Period == 0 {
+			d.Period = 5 * time.Minute
+		}
 	}
 
 	for i := range cfg.RouterAdvertisements {

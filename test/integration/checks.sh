@@ -191,6 +191,102 @@ bg nas "mkdir -p /tmp/nas-services /run/avahi-daemon && cp /tmp/smb.service /tmp
 mdns() { nsx laptop mdns-a | grep -q "c0 a8 1e 0a"; } # 192.168.30.10 in the answer
 wait_for 20 mdns && pass "laptop resolves nas.local (announced on VLAN 30) through the reflector" || fail "mDNS reflection: $(nsx laptop mdns-a)"
 
+echo "== WAN: IPv6 prefix delegation (routald DHCPv6 client, Kea on the ISP) and dynamic DNS (inadyn)"
+# the ISP delegates /56s out of 2001:db8:aa00::/48, with short timers to see a renewal
+put isp /tmp/isp-kea6.json <<CONF
+{"Dhcp6": {
+  "interfaces-config": {"interfaces": ["$ISP_R"]},
+  "lease-database": {"type": "memfile", "persist": false},
+  "renew-timer": 15, "rebind-timer": 25, "preferred-lifetime": 600, "valid-lifetime": 1200,
+  "subnet6": [{"id": 1, "subnet": "2001:db8:ff::/64", "interface": "$ISP_R",
+    "pd-pools": [{"prefix": "2001:db8:aa00::", "prefix-len": 48, "delegated-len": 56}]}]
+}}
+CONF
+bg isp "mkdir -p /tmp/isp-kea && KEA_PIDFILE_DIR=/tmp/isp-kea KEA_LOCKFILE_DIR=/tmp/isp-kea kea-dhcp6 -c /tmp/isp-kea6.json > /tmp/isp-kea6.log 2>&1"
+# a dyndns2 server that records the updates
+bg isp "socat TCP-LISTEN:8053,fork,reuseaddr SYSTEM:'head -1 >> /tmp/ddns.log; printf \"HTTP/1.0 200 OK\\r\\n\\r\\ngood\\n\"'"
+
+# router: announce whatever /64s the links get (drop the explicit LAN prefix), add PD and DDNS
+nsx router mkdir -p /tmp/secrets
+echo "ddns-secret" | put router /tmp/secrets/ddns.pass
+nsx router sh -c "sed '/^prefixes: \[fd00:1::\/64\]/d' /tmp/router.yaml > /tmp/router2.yaml"
+put router /tmp/overlay-wan.yaml <<CONF
+---
+apiVersion: v1alpha1
+kind: PrefixDelegationConfig
+name: isp
+link: wan0
+prefixLength: 56
+subnets: [{link: lan0, id: 0}, {link: srv0, id: 30}]
+---
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: home
+provider: custom
+server: 203.0.113.1:8053
+path: /nic/update?hostname=%h&myip=%i
+hostnames: [home.example.org]
+username: test
+passwordFile: secrets/ddns.pass
+link: wan0
+ssl: false
+period: 1m
+CONF
+nsx router sh -c "cat /tmp/overlay-wan.yaml >> /tmp/router2.yaml && routald validate /tmp/router2.yaml >/dev/null && cp /tmp/router2.yaml /tmp/router.yaml" || fail "WAN config rejected"
+
+pd_lease() { nsx router cat /var/lib/routal/pd-isp.json 2>/dev/null | sed -n 's/.*"prefix": "\(.*\)".*/\1/p'; }
+got_pd() { [ -n "$(pd_lease)" ]; }
+wait_for 60 got_pd && PD=$(pd_lease) && pass "delegated prefix: $PD" || fail "no delegated prefix: $(nsx router grep 'prefix delegation' /tmp/routald.log | tail -3)"
+P=${PD%%::/*}
+nsx router ip -6 addr show dev "$R_LAN" | grep -q "inet6 $P::1/64" && pass "lan0 got $P::1/64" || fail "lan0 address: $(nsx router ip -6 addr show dev "$R_LAN" | grep inet6)"
+nsx router ip -6 addr show dev srv0 | grep -q "inet6 $P:1e::1/64" && pass "srv0 got subnet 30 ($P:1e::1/64)" || fail "srv0 address: $(nsx router ip -6 addr show dev srv0 | grep inet6)"
+nsx router ip -6 route show type unreachable | grep -q "$PD" && pass "rest of the prefix routed to nowhere (no loop to the ISP)" || fail "unreachable route"
+nsx isp ip -6 route replace "$PD" via 2001:db8:ff::2 # the ISP routes the prefix to the router
+laptop_gua() { nsx laptop ip -6 addr show dev "$CL_IF" | grep "inet6 $P:" | grep -vqE "tentative|deprecated"; }
+wait_for 40 laptop_gua && pass "laptop got a global address from the delegated /64 (radvd follows the prefix)" || fail "laptop GUA: $(nsx laptop ip -6 addr show dev "$CL_IF" | grep inet6)"
+LAPTOP6=$(nsx laptop ip -6 addr show dev "$CL_IF" | sed -n "s/.*inet6 \($P:[^/]*\)\/64.*/\1/p" | head -1)
+v6_out() { nsx laptop tcp '[2001:db8:ff::1]' 80 TCP6 | grep -q isp; }
+wait_for 15 v6_out && pass "LAN -> Internet over IPv6 from the global address, no NAT: $(nsx laptop tcp '[2001:db8:ff::1]' 80 TCP6)" || fail "LAN -> Internet over IPv6"
+expect blocked "Internet -> laptop's global address" isp tcp "[$LAPTOP6]" 8080 TCP6
+renewed() { [ "$(nsx router grep -c "prefix delegation isp: $PD" /tmp/routald.log)" -ge 2 ]; }
+wait_for 40 renewed && pass "lease renewed at T1" || fail "no renewal: $(nsx router grep 'prefix delegation' /tmp/routald.log | tail -3)"
+
+ddns() { nsx isp grep -q "hostname=home.example.org&myip=203.0.113.2" /tmp/ddns.log; }
+wait_for 40 ddns && pass "dynamic DNS update: $(nsx isp head -1 /tmp/ddns.log | cut -c1-70)" || fail "no dynamic DNS update: $(nsx router grep inadyn /tmp/routald.log | tail -3)"
+
+echo "== WAN: PPPoE (pppd + rp-pppoe on the router, pppoe-server on the ISP)"
+put isp /tmp/pppoe-server-options <<CONF
+debug
+logfile /tmp/pppd-server.log
+require-pap
+lcp-echo-interval 10
+lcp-echo-failure 2
+CONF
+echo '"user@isp" * "ppp-secret" *' | put isp /etc/ppp/pap-secrets
+nsx isp pppoe-server -I "$ISP_R" -L 100.64.0.1 -R 100.64.0.2 -N 4 -O /tmp/pppoe-server-options -q /test/bin/isp-pppd
+echo "ppp-secret" | put router /tmp/secrets/pppoe.pass
+put router /tmp/overlay-pppoe.yaml <<CONF
+---
+apiVersion: v1alpha1
+kind: PPPoEConfig
+name: isp
+link: wan0
+username: user@isp
+passwordFile: secrets/pppoe.pass
+---
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: out-ppp
+outLink: ppp0
+CONF
+nsx router sh -c "sed 's/^links: \[wan0\]/links: [wan0, ppp0]/' /tmp/router.yaml > /tmp/router3.yaml && cat /tmp/overlay-pppoe.yaml >> /tmp/router3.yaml && routald validate /tmp/router3.yaml >/dev/null && cp /tmp/router3.yaml /tmp/router.yaml" || fail "PPPoE config rejected"
+ppp_up() { nsx router ip -4 addr show dev ppp0 | grep -q "inet 100.64.0.2"; }
+wait_for 40 ppp_up && pass "PPPoE session up: ppp0 100.64.0.2" || fail "PPPoE: $(nsx router grep pppd /tmp/routald.log | tail -3) / ISP: $(nsx isp tail -5 /tmp/pppd-server.log 2>/dev/null)"
+nsx router ip route show default | grep -q "dev ppp0" && pass "default route through ppp0" || fail "default route: $(nsx router ip route show default)"
+# 198.51.100.1 is behind the ISP (203.0.113.0/24 is directly connected to the router's eth0)
+nsx laptop tcp 198.51.100.1 80 | grep -q "100.64.0.2" && pass "LAN -> Internet through the session, masqueraded to 100.64.0.2" || fail "traffic over PPPoE: $(nsx laptop tcp 198.51.100.1 80)"
+nsx router nft list chain inet routal forward | grep -q 'oifname "ppp0".*maxseg size set rt mtu' && pass "TCP MSS clamped on ppp0" || fail "MSS clamp missing"
+
 echo
 echo "== $passes passed, $fails failed"
 if [ "$fails" -gt 0 ]; then echo "-- routald log:"; nsx router tail -40 /tmp/routald.log; fi
