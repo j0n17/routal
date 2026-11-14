@@ -1,0 +1,6 @@
+# error: field mtu not found
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: a
+links: [eth0]
+mtu: 1500

@@ -11,6 +11,12 @@ ARG TARGETOS TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /routald ./cmd/routald
 
+# routald with coverage instrumentation, for make cover (integration runs)
+FROM build AS build-cover
+ARG TARGETOS TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -cover -coverpkg=./... -o /routald-cover ./cmd/routald
+
 # Alpine's miniupnpd only has the iptables backend; Talos uses nftables.
 FROM alpine:${ALPINE_VERSION} AS miniupnpd
 ARG MINIUPNPD_VERSION=2_3_9
@@ -45,6 +51,7 @@ COPY --from=rootfs / /rootfs/usr/local/lib/containers/routald/
 # Integration tests (make integration): the same daemons plus clients, in network namespaces.
 FROM daemons AS integration
 RUN apk add --no-cache iproute2 bind-tools curl socat wireguard-tools miniupnpc dhcpcd tcpdump busybox-extras
+COPY --from=build-cover /routald-cover /usr/local/bin/routald-cover
 COPY test/integration /test
 COPY examples/nas-vpn/router.yaml /test/nas-vpn.yaml
 ENV PATH=/test/bin:$PATH

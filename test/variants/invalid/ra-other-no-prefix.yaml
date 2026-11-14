@@ -1,0 +1,6 @@
+# error: needs explicit prefixes
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: r
+link: eth1
+other: true

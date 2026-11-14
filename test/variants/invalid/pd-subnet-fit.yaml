@@ -1,0 +1,7 @@
+# error: does not fit in a /62
+apiVersion: v1alpha1
+kind: PrefixDelegationConfig
+name: p
+link: eth0
+prefixLength: 62
+subnets: [{link: eth1, id: 4}]

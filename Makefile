@@ -6,7 +6,7 @@ OUT           ?= _out
 
 GO = docker run --rm -v "$(CURDIR)":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src $(GO_IMAGE)
 
-.PHONY: test check integration clab extension installer push-installer image clean
+.PHONY: test check cover integration clab extension installer push-installer image clean
 
 test: ## run unit tests (in Docker)
 	$(GO) sh -c 'test -z "$$(gofmt -l .)" && go vet ./... && go test ./...'
@@ -19,6 +19,17 @@ check: test ## also check every example with the real tools: nftables ruleset, d
 integration: ## data-plane tests in network namespaces (router, LAN, NAS VLAN, WAN, VPN peer)
 	docker build --platform linux/$(ARCH) --target integration -t routal-integration:$(ARCH) .
 	docker run --rm --platform linux/$(ARCH) --privileged routal-integration:$(ARCH) /test/run.sh
+
+cover: ## coverage of the unit tests and of a routald run in make integration, merged: $(OUT)/cover/
+	rm -rf $(OUT)/cover && mkdir -p $(OUT)/cover/unit $(OUT)/cover/integration
+	$(GO) go test -cover -coverpkg=./... ./... -args -test.gocoverdir=/src/$(OUT)/cover/unit >/dev/null
+	docker build --platform linux/$(ARCH) --target integration -t routal-integration:$(ARCH) .
+	docker run --rm --platform linux/$(ARCH) --privileged -e COVER=1 -v "$(CURDIR)/$(OUT)/cover/integration":/cover \
+		routal-integration:$(ARCH) /test/run.sh | tail -1
+	$(GO) sh -c 'go tool covdata textfmt -i=$(OUT)/cover/unit,$(OUT)/cover/integration -o $(OUT)/cover/cover.out && \
+		go tool cover -func=$(OUT)/cover/cover.out > $(OUT)/cover/func.txt && \
+		go tool cover -html=$(OUT)/cover/cover.out -o $(OUT)/cover/cover.html && \
+		echo "report: $(OUT)/cover/cover.html" && tail -1 $(OUT)/cover/func.txt'
 
 clab: ## the integration checks on a containerlab topology (containerlab runs in Docker; KEEP=1 keeps the lab)
 	docker build --platform linux/$(ARCH) --target integration -t routal-integration:$(ARCH) .

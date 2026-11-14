@@ -1,0 +1,79 @@
+# Variant: port forwards: range, UDP, IPv6 target, restricted sources (both families), no
+# reflection, toPort; IPv6 rules with groups of only one family.
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: dmz
+links: [dmz0]
+---
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: servers6
+subnets: [2001:db8:1::/64]
+---
+apiVersion: v1alpha1
+kind: FirewallPortGroupConfig
+name: games
+ports: ["27015-27030", 3478]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: games-in
+from: wan
+to: dmz
+protocol: udp
+portGroups: [games]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: web6-in
+from: wan
+to: dmz
+protocol: tcp
+ports: [80, 443]
+destinationGroups: [servers6]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: icmpv6-in
+from: wan
+to: dmz
+protocol: icmpv6
+---
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: games
+inLink: wan0
+protocol: udp
+ports: ["27015-27030"]
+toAddress: 10.0.0.5
+reflection: false
+---
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: ssh-alt
+inLink: wan0
+protocol: tcp
+ports: [2222]
+toAddress: 10.0.0.6
+toPort: 22
+sourceSubnets: [198.51.100.0/24, 2001:db8:ffff::/48]
+---
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: web6
+inLink: wan0
+protocol: tcp
+ports: [8080]
+toAddress: 2001:db8:1::80
+toPort: 80
+---
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: out
+outLink: wan0
+sourceSubnets: [10.0.0.0/24]

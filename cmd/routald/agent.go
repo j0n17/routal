@@ -30,6 +30,7 @@ type agent struct {
 	dirs       services.Dirs
 	services   *supervisor
 	names      *leaseNames
+	blocker    *blocker
 	pd         *pdManager
 
 	applied [32]byte
@@ -72,6 +73,7 @@ func (a *agent) reconcile() error {
 	errs := []error{a.applyFirewall(cfg, e)}
 	errs = append(errs, a.services.reconcile(services.Render(cfg, e, a.dirs)))
 	errs = append(errs, a.names.sync(cfg, a.services.generation("unbound")))
+	errs = append(errs, a.blocker.sync(cfg, a.services.generation("unbound")))
 
 	return errors.Join(errs...)
 }

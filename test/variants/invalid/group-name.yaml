@@ -1,0 +1,5 @@
+# error: become nftables set names
+apiVersion: v1alpha1
+kind: FirewallPortGroupConfig
+name: web-ports
+ports: [80]

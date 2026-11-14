@@ -1,0 +1,9 @@
+# error: toPort can only be used with a single port
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: p
+inLink: eth0
+protocol: tcp
+ports: ["80-90"]
+toAddress: 10.0.0.1
+toPort: 8080

@@ -1,0 +1,10 @@
+# error: can be in one zone only
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: a
+links: [eth0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: b
+links: [eth0]

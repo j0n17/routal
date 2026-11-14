@@ -1,0 +1,60 @@
+# Variant: IPv4 forwarding only, permissive default with logging, several links per zone,
+# ICMP and port ranges, a block rule with log, an IPv4-only masquerade with a fixed source.
+apiVersion: v1alpha1
+kind: ForwardingConfig
+ipv4: true
+ipv6: false
+---
+apiVersion: v1alpha1
+kind: FirewallConfig
+forwardDefault: accept
+logBlocked: true
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [eth0, eth3]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [eth1, eth2.10, eth2.20]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: no-smb-out
+from: lan
+to: wan
+action: block
+protocol: tcp
+ports: [139, 445, "6881-6889"]
+log: true
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: ping-in
+from: wan
+to: lan
+protocol: icmp
+destinationSubnets: [10.0.0.0/8]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: ssh-router
+from: lan
+to: self
+protocol: tcp
+ports: [22]
+sourceSubnets: [10.1.0.0/16]
+---
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: fixed
+outLink: eth0
+sourceSubnets: [10.0.0.0/8]
+snatAddress: 203.0.113.10
+---
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: backup-wan
+outLink: eth3

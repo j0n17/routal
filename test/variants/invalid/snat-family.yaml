@@ -1,0 +1,7 @@
+# error: different families
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: m
+outLink: eth0
+sourceSubnets: [fd00::/64]
+snatAddress: 203.0.113.1

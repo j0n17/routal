@@ -1,0 +1,8 @@
+# error: invalid mac
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: d
+link: eth1
+rangeStart: 10.0.0.100
+rangeEnd: 10.0.0.200
+staticLeases: [{mac: "zz:zz", address: 10.0.0.5}]

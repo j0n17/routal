@@ -1,0 +1,3 @@
+# error: unsupported apiVersion
+apiVersion: v1alpha2
+kind: FirewallConfig

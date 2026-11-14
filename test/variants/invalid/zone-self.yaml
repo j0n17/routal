@@ -1,0 +1,5 @@
+# error: "self" is reserved
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: self
+links: [eth0]

@@ -1,0 +1,16 @@
+# Variant: the smallest router, no services: forwarding, two zones, one rule.
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [eth1]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [eth0]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: out
+from: lan
+to: wan

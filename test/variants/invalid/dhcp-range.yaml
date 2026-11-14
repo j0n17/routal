@@ -1,0 +1,7 @@
+# error: rangeEnd is before rangeStart
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: d
+link: eth1
+rangeStart: 10.0.0.200
+rangeEnd: 10.0.0.100

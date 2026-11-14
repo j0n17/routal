@@ -1,0 +1,7 @@
+# error: response must be nxdomain or null
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [eth1]
+blocking:
+  domains: [ads.example.com]
+  response: refused

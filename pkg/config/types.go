@@ -190,6 +190,20 @@ type DNSServer struct {
 	LocalDomain        string       `yaml:"localDomain,omitempty"`
 	RegisterDHCPLeases *bool        `yaml:"registerDHCPLeases,omitempty"`
 	LocalRecords       []DNSRecord  `yaml:"localRecords,omitempty"`
+	// Blocking answers blocked names with NXDOMAIN (ads, trackers): lists by URL and inline names.
+	Blocking *DNSBlocking `yaml:"blocking,omitempty"`
+}
+
+// DNSBlocking is an AdGuard/Pi-hole style blocklist for the DNS server.
+type DNSBlocking struct {
+	// Lists are URLs of hosts files, domain lists or AdBlock-style lists (||domain^), downloaded
+	// by routald and refreshed every Refresh.
+	Lists   []string `yaml:"lists,omitempty"`
+	Domains []string `yaml:"domains,omitempty"` // blocked, with their subdomains
+	Allow   []string `yaml:"allow,omitempty"`   // never blocked (even inside a blocked domain)
+	// Response is nxdomain (default) or null (0.0.0.0 / ::).
+	Response string        `yaml:"response,omitempty"`
+	Refresh  time.Duration `yaml:"refresh,omitempty"` // default 24h
 }
 
 // DNSRecord is a static local DNS record.

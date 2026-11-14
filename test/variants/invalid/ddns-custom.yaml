@@ -1,0 +1,6 @@
+# error: needs server and path
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: d
+provider: custom
+hostnames: [a.example.org]

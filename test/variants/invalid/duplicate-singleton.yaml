@@ -1,0 +1,8 @@
+# error: duplicate NTPServerConfig
+apiVersion: v1alpha1
+kind: NTPServerConfig
+listenLinks: [eth1]
+---
+apiVersion: v1alpha1
+kind: NTPServerConfig
+listenLinks: [eth2]

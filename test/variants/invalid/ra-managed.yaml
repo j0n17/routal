@@ -1,0 +1,6 @@
+# error: not supported yet
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: r
+link: eth1
+managed: true

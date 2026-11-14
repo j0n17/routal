@@ -15,7 +15,7 @@ machine, and the `routald` system extension turns it into a router.
 | ingress firewall for the router itself | zone firewall for forwarded traffic, address/port groups |
 | A/B upgrades, `apply-config --mode try` (auto-rollback) | masquerade / SNAT, port forwards (with NAT loopback), UPnP |
 | | WAN: PPPoE, IPv6 prefix delegation, dynamic DNS |
-| API, `talosctl`, Kubernetes-free mode | DHCP (Kea), caching DNS (Unbound), IPv6 RA (radvd), NTP (chrony), mDNS reflector (Avahi) |
+| API, `talosctl`, Kubernetes-free mode | DHCP (Kea), caching DNS with blocklists (Unbound), IPv6 RA (radvd), NTP (chrony), mDNS reflector (Avahi) |
 
 ## Configuration
 
@@ -95,7 +95,7 @@ Every field is in [`examples/reference/router.yaml`](examples/reference/router.y
 | `PortForwardConfig` | destination NAT on an incoming link, reflected for inside clients (`reflection`, default on) | nftables |
 | `UPnPConfig` | devices open their own forwards (UPnP IGD, NAT-PMP, PCP), to their own address only | miniupnpd |
 | `DHCPServerConfig` | DHCPv4 pools, options and static leases (by MAC) | Kea |
-| `DNSServerConfig` | caching DNS, local domain, DHCP client names, static records | Unbound |
+| `DNSServerConfig` | caching DNS, local domain, DHCP client names, static records, blocklists (AdGuard / Pi-hole style) | Unbound |
 | `RouterAdvertisementConfig` | IPv6 SLAAC, optionally DHCPv6 options (`other`) | radvd, Kea |
 | `NTPServerConfig` | time for local networks (does not touch the clock, Talos does) | chrony |
 | `MDNSReflectorConfig` | mDNS/Bonjour across links (printers, AirPlay, Chromecast across VLANs) | Avahi |
@@ -126,17 +126,21 @@ build: Talos reuses an image it already pulled under the same tag.
 ## Tests
 
 ```sh
-make test          # unit tests, gofmt, go vet
-make check         # + every example checked by the real tools: nft -c, kea -t, unbound-checkconf,
-                   #   radvd -c, chronyd -p, talosctl validate
+make test          # unit tests, gofmt, go vet, config variants (valid and invalid)
+make check         # + every example and variant checked by the real tools: nft -c, kea -t,
+                   #   unbound-checkconf, radvd -c, chronyd -p, inadyn --check-config, talosctl validate
+make cover         # coverage of the unit tests and of an instrumented routald in make integration
 make integration   # data plane in network namespaces: router, LAN clients, NAS VLAN, WAN host, VPN peer
 make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
 ```
 
-Both run the real routald and daemons with `examples/nas-vpn` and the same 50 checks
-(test/integration/checks.sh): DHCP, SLAAC, DNS, the firewall in IPv4 and IPv6, NAT, reflection,
-UPnP, NTP, mDNS, then the WAN against a simulated ISP: IPv6 prefix delegation (Kea) with renewal,
-dynamic DNS, and a PPPoE session (pppoe-server). `make integration` needs only Docker (one privileged container, network
+Both run the real routald and daemons with `examples/nas-vpn` and the same 56 checks
+(test/integration/checks.sh): DHCP, SLAAC, DNS, DNS blocking, the firewall in IPv4 and IPv6, NAT,
+reflection, UPnP, NTP, mDNS, then the WAN against a simulated ISP: IPv6 prefix delegation (Kea)
+with renewal, dynamic DNS, and a PPPoE session (pppoe-server).
+
+`test/variants/` holds router configs that exercise the options the examples do not, and invalid
+ones with the error they must produce (`# error:` on the first line). `make integration` needs only Docker (one privileged container, network
 namespaces). `make clab` runs containerlab in its own container, on Linux or macOS with Docker
 Desktop, one container per node; `KEEP=1 make clab` leaves the lab up to poke at it
 (`docker exec -it clab-routal-router sh`). Talos itself (boot, upgrades, its ingress firewall) was

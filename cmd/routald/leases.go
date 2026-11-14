@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -85,16 +82,5 @@ func (l *leaseNames) sync(cfg *config.Config, unboundGen int) error {
 }
 
 func (l *leaseNames) control(cmd string, lines []string) error {
-	c := exec.Command(l.ctl, "-c", filepath.Join(l.dirs.State, "unbound.conf"), cmd)
-	c.Stdin = strings.NewReader(strings.Join(lines, "\n") + "\n")
-
-	var out bytes.Buffer
-
-	c.Stdout, c.Stderr = &out, &out
-
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("unbound-control %s: %w: %s", cmd, err, strings.TrimSpace(out.String()))
-	}
-
-	return nil
+	return unboundControl(l.ctl, filepath.Join(l.dirs.State, "unbound.conf"), cmd, lines)
 }

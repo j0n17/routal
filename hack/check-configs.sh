@@ -1,10 +1,13 @@
 #!/bin/sh
-# Checks every example's generated configs with the real tools (run in the daemons image, with NET_ADMIN).
+# Checks every example's and variant's generated configs with the real tools (run in the daemons image, with NET_ADMIN).
 set -eu
 fail=0
 mkdir -p /run/routal /var/lib/routal
-for f in /src/examples/*/router.yaml; do
-  ex=$(basename "$(dirname "$f")")
+for f in /src/examples/*/router.yaml /src/test/variants/*.yaml; do
+  case $f in
+    */router.yaml) ex=$(basename "$(dirname "$f")") ;;
+    *) ex=variant-$(basename "$f" .yaml) ;;
+  esac
   out=/tmp/check/$ex
   mkdir -p "$out"
   routald render "$f" > "$out/ruleset.nft"

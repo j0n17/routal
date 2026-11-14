@@ -1,0 +1,8 @@
+# error: must be IPv4 and contain the range
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: d
+link: eth1
+subnet: 10.1.0.0/24
+rangeStart: 10.0.0.100
+rangeEnd: 10.0.0.200

@@ -1,0 +1,66 @@
+# Variant: services with non-default options: explicit DHCP subnet/gateway/DNS, several static
+# leases, DNS through Talos' resolver without lease names, null blocking from lists only, stateless
+# DHCPv6 with explicit DNS, custom NTP upstreams, mDNS across three links.
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0, iot0, guest0]
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+subnet: 10.10.0.0/16
+rangeStart: 10.10.100.0
+rangeEnd: 10.10.199.255
+leaseTime: 168h
+gateway: 10.10.0.254
+dnsServers: [10.10.0.1, 1.1.1.1]
+domain: lan.example
+staticLeases:
+  - {mac: "AA:BB:CC:00:00:01", address: 10.10.0.10, hostname: printer}
+  - {mac: "aa:bb:cc:00:00:02", address: 10.10.0.11, hostname: tv}
+  - {mac: "aa:bb:cc:00:00:03", address: 10.10.0.12}
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: iot
+link: iot0
+rangeStart: 10.20.0.100
+rangeEnd: 10.20.0.120
+leaseTime: 30m
+---
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0, iot0]
+cacheSize: 50000
+registerDHCPLeases: false
+localRecords:
+  - {name: nas.lan.example, addresses: [10.10.0.20, "fd10::20"]}
+blocking:
+  lists: [https://example.org/hosts.txt, "http://lists.example.net/adblock.txt"]
+  response: "null"
+  refresh: 12h
+---
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: lan
+link: lan0
+prefixes: [fd10::/64, 2001:db8:10::/64]
+other: true
+dnsServers: [fd10::1, 2620:fe::fe]
+routerLifetime: 2h
+---
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: iot
+link: iot0
+---
+apiVersion: v1alpha1
+kind: NTPServerConfig
+listenLinks: [lan0]
+upstreams: [ntp.example.org, 0.pool.ntp.org, 1.pool.ntp.org]
+---
+apiVersion: v1alpha1
+kind: MDNSReflectorConfig
+links: [lan0, iot0, guest0]

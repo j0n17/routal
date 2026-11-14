@@ -1,0 +1,7 @@
+# error: period must be at least 1m
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: d
+provider: duckdns.org
+hostnames: [a.duckdns.org]
+period: 10s

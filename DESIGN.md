@@ -134,6 +134,19 @@ for the lab: an ISP with PPPoE (accel-ppp) and DHCPv6-PD once routald has the cl
   that /dev/ppp is usable from the extension container, and that Talos leaves the addresses and
   the unreachable route routald adds alone.
 
+## DNS blocking (2026-11-14)
+`DNSServerConfig.blocking`: lists by URL (hosts, domain lists, simple AdBlock `||name^` rules),
+inline domains, an allow list, NXDOMAIN or null answers. routald downloads the lists in the
+background (cached in the state directory, a failed refresh keeps the previous copy, Talos' host
+DNS when the container has no resolv.conf) and pushes `local_zones` through unbound-control, so a
+refresh does not flush the cache. Subdomains of blocked names are folded into their parent's zone;
+an allowed name inside a blocked zone becomes a transparent zone.
+
+## Test coverage
+`make cover` merges the unit tests' coverage with a routald built with `-cover` running the whole
+`make integration` scenario: 91% of statements. What is left is mostly error paths of the DHCPv6
+client (server gone during renewal, prefix change).
+
 ## Talos kernel (v1.15.0-beta.0), checked on the VM
 | Feature | Kernel | Consequence |
 |---|---|---|
@@ -146,7 +159,7 @@ for the lab: an ISP with PPPoE (accel-ppp) and DHCPv6-PD once routald has the cl
 1. Kernel options upstream (siderolabs/pkgs, as modules): `PPPOE`, `NF_FLOW_TABLE(_INET)` + `NFT_FLOW_OFFLOAD`, `NET_SCH_CAKE`.
 2. WAN: test PPPoE and prefix delegation on Talos (VM); prefix delegation over PPPoE in the lab;
    ISP DHCP options (e.g. option 90, VLAN priority); deprecate the old prefix (lifetime 0) when the
-   ISP changes it; DNS blocklists (Unbound local zones, "AdGuard-like").
+   ISP changes it.
 3. SQM: `SQMConfig` with HTB + fq_codel on the WAN (egress) and an ifb (ingress); cake when available.
 4. Flowtables offload once the kernel has it (`flowtable` + `flow add @ft` for established flows).
 5. FQDN-based rules: Unbound has no nftset; options are a dnsmasq forwarder with nftset (custom build)

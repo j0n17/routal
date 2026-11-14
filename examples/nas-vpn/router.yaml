@@ -152,6 +152,11 @@ kind: DNSServerConfig
 listenLinks: [lan0, srv0, wg0]
 upstreams: [9.9.9.9, 2620:fe::fe]
 localDomain: home.arpa
+# AdGuard / Pi-hole style: blocked names get NXDOMAIN, for every device that uses the router's DNS.
+blocking:
+  lists: [https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts]
+  domains: [doubleclick.net]
+  allow: [s.youtube.com]
 ---
 # IPv6: SLAAC on the LAN and the servers VLAN.
 apiVersion: v1alpha1

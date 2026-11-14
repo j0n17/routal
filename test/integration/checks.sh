@@ -100,13 +100,32 @@ server:
 	module-config: "iterator"
 	local-zone: "example.com." static
 	local-data: "example.com. A 198.51.100.10"
+	local-data: "ads.example.com. A 198.51.100.66"
+	local-data: "sub.ads.example.com. A 198.51.100.66"
+	local-data: "ok.ads.example.com. A 198.51.100.67"
+	local-data: "tracker.example.com. A 198.51.100.68"
+	local-data: "metrics.example.com. A 198.51.100.69"
 CONF
+# a blocklist (hosts format) served by the "Internet"
+put isp /tmp/hosts.txt <<CONF
+# test blocklist
+0.0.0.0 ads.example.com
+0.0.0.0 tracker.example.com
+CONF
+nsx isp sh -c 'printf "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n" > /tmp/hosts.http && cat /tmp/hosts.txt >> /tmp/hosts.http'
+bg isp "socat TCP-LISTEN:8081,fork,reuseaddr SYSTEM:'cat /tmp/hosts.http'"
 bg isp "unbound -c /tmp/isp-unbound.conf > /tmp/isp-unbound.log 2>&1"
 
 echo "== router config: examples/nas-vpn + test overlay"
-nsx router sh -c "sed 's/upstreams: \[9.9.9.9, 2620:fe::fe\]/upstreams: [203.0.113.1]/' /test/nas-vpn.yaml > /tmp/router.yaml && cat /test/overlay.yaml >> /tmp/router.yaml"
+# the example with the test's Internet: upstream DNS and blocklist on the isp
+nsx router sh -c "sed -e 's/upstreams: \[9.9.9.9, 2620:fe::fe\]/upstreams: [203.0.113.1]/' \
+	-e 's#https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts#http://203.0.113.1:8081/hosts.txt#' \
+	-e 's/domains: \[doubleclick.net\]/domains: [metrics.example.com]/' -e 's/allow: \[s.youtube.com\]/allow: [ok.ads.example.com]/' \
+	/test/nas-vpn.yaml > /tmp/router.yaml && cat /test/overlay.yaml >> /tmp/router.yaml"
 nsx router routald validate /tmp/router.yaml || exit 1
-bg router "routald run -config /tmp/router.yaml > /tmp/routald.log 2>&1"
+# COVER=1: the coverage-instrumented routald, counters written to /cover when it stops
+if [ -n "${COVER:-}" ]; then ROUTALD="env GOCOVERDIR=/cover routald-cover"; else ROUTALD=routald; fi
+bg router "mkdir -p /cover && $ROUTALD run -config /tmp/router.yaml > /tmp/routald.log 2>&1"
 wait_for 20 nsx router nft list table inet routal || { nsx router cat /tmp/routald.log; exit 1; }
 wait_for 20 nsx router test -f /var/lib/routal/unbound.conf
 
@@ -144,6 +163,16 @@ expect ok "LAN over IPv6: laptop.home.arpa" laptop $D @fd00:1::1 laptop.home.arp
 expect ok "servers VLAN: laptop.home.arpa" nas $D @192.168.30.1 laptop.home.arpa
 expect ok "VPN: nas.home.arpa through the tunnel" remote $D @10.8.0.1 nas.home.arpa
 expect blocked "WAN: no DNS on the router's public address" isp $D @203.0.113.2 nas.home.arpa
+
+echo "== DNS blocking (blocklist from a URL, inline names, allow list)"
+status() { nsx laptop dig +time=2 +tries=1 @192.168.1.1 "$1" | sed -n 's/.*status: \([A-Z]*\).*/\1/p'; }
+blocked() { [ "$(status ads.example.com)" = NXDOMAIN ]; }
+wait_for 30 blocked && pass "ads.example.com (from the list) -> NXDOMAIN" || fail "ads.example.com: $(status ads.example.com) $(nsx router grep blocking /tmp/routald.log | tail -2)"
+[ "$(status sub.ads.example.com)" = NXDOMAIN ] && pass "sub.ads.example.com (subdomain) -> NXDOMAIN" || fail "subdomain: $(status sub.ads.example.com)"
+[ "$(status tracker.example.com)" = NXDOMAIN ] && pass "tracker.example.com (from the list) -> NXDOMAIN" || fail "tracker: $(status tracker.example.com)"
+[ "$(status metrics.example.com)" = NXDOMAIN ] && pass "metrics.example.com (inline domain) -> NXDOMAIN" || fail "inline: $(status metrics.example.com)"
+[ "$(q laptop 192.168.1.1 ok.ads.example.com)" = 198.51.100.67 ] && pass "ok.ads.example.com (allow list) -> 198.51.100.67" || fail "allowed: $(q laptop 192.168.1.1 ok.ads.example.com)"
+[ "$(q laptop 192.168.1.1 example.com)" = 198.51.100.10 ] && pass "example.com still resolves" || fail "example.com"
 
 echo "== firewall: the NAS"
 expect ok "LAN -> NAS:443 v4" laptop tcp 192.168.30.10 443
@@ -286,6 +315,12 @@ nsx router ip route show default | grep -q "dev ppp0" && pass "default route thr
 # 198.51.100.1 is behind the ISP (203.0.113.0/24 is directly connected to the router's eth0)
 nsx laptop tcp 198.51.100.1 80 | grep -q "100.64.0.2" && pass "LAN -> Internet through the session, masqueraded to 100.64.0.2" || fail "traffic over PPPoE: $(nsx laptop tcp 198.51.100.1 80)"
 nsx router nft list chain inet routal forward | grep -q 'oifname "ppp0".*maxseg size set rt mtu' && pass "TCP MSS clamped on ppp0" || fail "MSS clamp missing"
+
+if [ -n "${COVER:-}" ]; then # stop routald cleanly so that it writes its coverage counters
+	nsx router pkill -TERM -x routald-cover
+	gone() { ! nsx router pgrep -x routald-cover >/dev/null; }
+	wait_for 60 gone || echo "  routald-cover did not stop: coverage incomplete"
+fi
 
 echo
 echo "== $passes passed, $fails failed"

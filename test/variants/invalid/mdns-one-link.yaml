@@ -1,0 +1,4 @@
+# error: at least two links
+apiVersion: v1alpha1
+kind: MDNSReflectorConfig
+links: [eth1]

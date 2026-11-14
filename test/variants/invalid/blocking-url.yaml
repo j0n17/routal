@@ -1,0 +1,6 @@
+# error: is not an http(s) URL
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [eth1]
+blocking:
+  lists: [ftp://example.org/list]

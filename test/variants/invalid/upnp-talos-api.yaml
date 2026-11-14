@@ -1,0 +1,6 @@
+# error: include the Talos API ports
+apiVersion: v1alpha1
+kind: UPnPConfig
+externalLink: eth0
+internalLinks: [eth1]
+externalPorts: ["40000-60000"]

@@ -313,6 +313,16 @@ func (cfg *Config) applyDefaults() {
 		if cfg.DNSServer.RegisterDHCPLeases == nil {
 			cfg.DNSServer.RegisterDHCPLeases = new(true)
 		}
+
+		if b := cfg.DNSServer.Blocking; b != nil {
+			if b.Response == "" {
+				b.Response = "nxdomain"
+			}
+
+			if b.Refresh == 0 {
+				b.Refresh = 24 * time.Hour
+			}
+		}
 	}
 
 	for i := range cfg.PortForwards {

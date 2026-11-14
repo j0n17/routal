@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -298,6 +300,32 @@ func (cfg *Config) Validate() error {
 
 		if d.LocalDomain != "" && !hostRe.MatchString(d.LocalDomain) {
 			fail("DNSServerConfig: invalid localDomain %q", d.LocalDomain)
+		}
+
+		if b := d.Blocking; b != nil {
+			for _, u := range b.Lists {
+				if pu, err := url.Parse(u); err != nil || (pu.Scheme != "http" && pu.Scheme != "https") || pu.Host == "" {
+					fail("DNSServerConfig blocking: list %q is not an http(s) URL", u)
+				}
+			}
+
+			for _, n := range append(slices.Clone(b.Domains), b.Allow...) {
+				if !hostRe.MatchString(n) || !strings.Contains(n, ".") {
+					fail("DNSServerConfig blocking: invalid domain %q", n)
+				}
+			}
+
+			if b.Response != "nxdomain" && b.Response != "null" {
+				fail("DNSServerConfig blocking: response must be nxdomain or null, got %q", b.Response)
+			}
+
+			if b.Refresh < time.Minute {
+				fail("DNSServerConfig blocking: refresh must be at least 1m")
+			}
+
+			if len(b.Lists) == 0 && len(b.Domains) == 0 {
+				fail("DNSServerConfig blocking: needs lists or domains")
+			}
 		}
 
 		for _, r := range d.LocalRecords {

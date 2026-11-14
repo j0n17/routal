@@ -64,6 +64,7 @@ func run(args []string) error {
 			services:   newSupervisor(dirs),
 			names:      &leaseNames{ctl: "/usr/sbin/unbound-control", dirs: dirs},
 			pd:         &pdManager{stateDir: dirs.State},
+			blocker:    &blocker{ctl: "/usr/sbin/unbound-control", dirs: dirs},
 		}).run(ctx)
 	}
 
@@ -78,7 +79,7 @@ func run(args []string) error {
 
 		for _, p := range env.Host().Addrs(fs.Arg(0)) {
 			a := p.Addr()
-			if a.Is4() != *v6 && !a.IsLinkLocalUnicast() && !(a.Is6() && a.IsPrivate()) {
+			if a.Is4() != *v6 && !a.IsLoopback() && !a.IsLinkLocalUnicast() && !(a.Is6() && a.IsPrivate()) {
 				fmt.Println(a)
 
 				return nil

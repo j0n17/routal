@@ -1,0 +1,59 @@
+# Variant: WAN options: PPPoE with a service name, IPv4 only and no default route (a second WAN),
+# prefix delegation on DHCP without RA and without a length hint, dynamic DNS over IPv6 with the
+# provider's view of the address, a custom server without TLS, UPnP with custom ports.
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0, ppp1]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0, lan1]
+---
+apiVersion: v1alpha1
+kind: PPPoEConfig
+name: backup
+link: wan1
+interface: ppp1
+username: backup@isp.example
+passwordFile: secrets/pppoe.pass
+mtu: 1480
+serviceName: internet
+defaultRoute: false
+ipv6: false
+---
+apiVersion: v1alpha1
+kind: PrefixDelegationConfig
+name: main
+link: wan0
+acceptRA: false
+subnets:
+  - {link: lan0, id: 0}
+  - {link: lan1, id: 255}
+---
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: v6
+provider: duckdns.org
+hostnames: [myhome.duckdns.org, other.duckdns.org]
+passwordFile: secrets/ddns.token
+ipv6: true
+period: 10m
+---
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: plain
+provider: custom
+server: 192.0.2.53:8080
+path: /update?h=%h&ip=%i
+hostnames: [router.example.net]
+ssl: false
+link: wan0
+---
+apiVersion: v1alpha1
+kind: UPnPConfig
+externalLink: wan0
+internalLinks: [lan0, lan1]
+externalPorts: ["10000-20000", "40000-49999"]
+internalSubnets: [192.168.1.0/24, 192.168.2.0/25]

@@ -1,0 +1,11 @@
+# error: to zone "nowhere" does not exist
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: a
+links: [eth0]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: r
+from: a
+to: nowhere

@@ -1,0 +1,4 @@
+# error: unknown kind "RouteConfig"
+apiVersion: v1alpha1
+kind: RouteConfig
+name: r

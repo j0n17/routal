@@ -1,0 +1,8 @@
+# error: mtu must be between 1280 and 1500
+apiVersion: v1alpha1
+kind: PPPoEConfig
+name: p
+link: eth0
+username: u
+passwordFile: secrets/p
+mtu: 9000

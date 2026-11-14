@@ -1,0 +1,23 @@
+# error: use either source or sourceGroups
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: a
+links: [eth0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: b
+links: [eth1]
+---
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: g
+subnets: [10.0.0.0/8]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: r
+from: a
+to: b
+sourceSubnets: [10.0.0.0/8]
+sourceGroups: [g]
