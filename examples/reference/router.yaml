@@ -166,6 +166,16 @@ to: self
 protocol: udp
 ports: [51820]
 ---
+# The BGP neighbor of talos.yaml's BGPInstanceConfig.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: bgp
+from: lan
+to: self
+protocol: tcp
+ports: [179]
+sourceSubnets: [192.168.1.254/32]
+---
 apiVersion: v1alpha1
 kind: FirewallRuleConfig
 name: lan-services

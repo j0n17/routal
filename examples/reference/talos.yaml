@@ -100,6 +100,19 @@ addresses:
   - address: 10.8.0.1/24
   - address: fd00:8::1/64
 ---
+# Dynamic routing: Talos speaks BGP itself (the `bgp` rule in router.yaml lets the neighbor in).
+# VRFs (`kind: VRFConfig`, then `vrf:` here) and policy routing (`kind: RoutingRuleConfig`) are
+# Talos documents too: see examples/bgp-vrf.
+apiVersion: v1alpha1
+kind: BGPInstanceConfig
+name: core
+localASN: 65001
+routerID: 192.168.1.1
+advertise: [srv0] # announce the networks of these links
+neighbors:
+  - address: 192.168.1.254
+    peerASN: 65002
+---
 # Ingress firewall for the router itself: deny by default. routald's `to: self` rules add
 # routal-* NetworkRuleConfig documents next to these.
 apiVersion: v1alpha1

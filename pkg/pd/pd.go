@@ -92,10 +92,17 @@ func Message(t dhcpv6.MessageType, duid dhcpv6.DUID, iaid [4]byte, hint int, lea
 	return m, nil
 }
 
+// ErrRefused is returned by Parse when the server answered without a usable prefix (a status such
+// as NoBinding, or lifetimes of 0): the lease is gone and the client must solicit again.
+var ErrRefused = errors.New("server")
+
+// MinRenew is the shortest time before a renewal.
+const MinRenew = 30 * time.Second
+
 // Parse reads the delegated prefix from an Advertise or Reply.
 func Parse(m *dhcpv6.Message, iaid [4]byte, now time.Time) (*Lease, error) {
 	if st := m.Options.Status(); st != nil && st.StatusCode != iana.StatusSuccess {
-		return nil, fmt.Errorf("server: %s", st)
+		return nil, fmt.Errorf("%w: %s", ErrRefused, st)
 	}
 
 	var iapd *dhcpv6.OptIAPD
@@ -111,7 +118,12 @@ func Parse(m *dhcpv6.Message, iaid [4]byte, now time.Time) (*Lease, error) {
 	}
 
 	if st := iapd.Options.Status(); st != nil && st.StatusCode != iana.StatusSuccess {
-		return nil, fmt.Errorf("server: %s", st)
+		return nil, fmt.Errorf("%w: %s", ErrRefused, st)
+	}
+
+	sid := m.Options.ServerID()
+	if sid == nil {
+		return nil, errors.New("no server identifier in the answer")
 	}
 
 	for _, p := range iapd.Options.Prefixes() {
@@ -122,7 +134,7 @@ func Parse(m *dhcpv6.Message, iaid [4]byte, now time.Time) (*Lease, error) {
 
 		l := &Lease{
 			Prefix: prefix, Preferred: p.PreferredLifetime, Valid: p.ValidLifetime,
-			T1: iapd.T1, T2: iapd.T2, Obtained: now, ServerID: m.Options.ServerID().ToBytes(),
+			T1: iapd.T1, T2: iapd.T2, Obtained: now, ServerID: sid.ToBytes(),
 			iapd: iapd,
 		}
 
@@ -135,10 +147,14 @@ func Parse(m *dhcpv6.Message, iaid [4]byte, now time.Time) (*Lease, error) {
 			l.T2 = l.Preferred * 4 / 5
 		}
 
+		// a deprecated prefix (preferred 0) or tiny timers must not make the client renew in a loop
+		l.T1 = max(l.T1, MinRenew)
+		l.T2 = max(l.T2, l.T1)
+
 		return l, nil
 	}
 
-	return nil, errors.New("no usable prefix in the IA_PD")
+	return nil, fmt.Errorf("%w: no usable prefix in the IA_PD", ErrRefused)
 }
 
 // Subnet returns the /64 number id of the delegated prefix, and the router's address in it (::1).

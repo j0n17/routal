@@ -61,7 +61,8 @@ func TestGeneratePortForward(t *testing.T) {
 	}
 
 	// the forwarded port must be opened in Talos' prerouting filter, which runs before DNAT
-	want := "name: routal-pf-nas-https\nportSelector:\n  ports:\n    - 443\n  protocol: tcp\n"
+	// only for the family of the target: the port is not forwarded for the other one
+	want := "name: routal-pf-nas-https\nportSelector:\n  ports:\n    - 443\n  protocol: tcp\ningress:\n  - subnet: 0.0.0.0/0\n---"
 	if !strings.Contains(string(out), want) {
 		t.Errorf("missing %q in:\n%s", want, out)
 	}

@@ -1,0 +1,88 @@
+# BGP and a VRF, both done by Talos itself (VRFConfig, BGPInstanceConfig); routald adds the
+# firewall and the services. Apply on top of `talosctl gen config --skip-k8s-etcd`.
+#
+#   mgmt0 (default routing domain)   the Talos API, image pulls
+#   core0 ─┐
+#          ├─ vrf-lab (table 100)    its own routing table: nothing leaks to or from mgmt0
+#   lab0  ─┘
+#
+# The router announces the lab network to the core router over BGP and learns its routes from it.
+apiVersion: v1alpha1
+kind: HostnameConfig
+auto: "off"
+hostname: lab-router
+---
+apiVersion: v1alpha1
+kind: LinkAliasConfig
+name: mgmt0
+selector:
+  match: mac(link.permanent_addr) == "52:54:00:00:00:01"
+---
+apiVersion: v1alpha1
+kind: LinkAliasConfig
+name: trunk0
+selector:
+  match: mac(link.permanent_addr) == "52:54:00:00:00:02"
+---
+apiVersion: v1alpha1
+kind: DHCPv4Config
+name: mgmt0
+---
+apiVersion: v1alpha1
+kind: LinkConfig
+name: trunk0
+up: true
+---
+# The link to the core router.
+apiVersion: v1alpha1
+kind: VLANConfig
+name: core0
+vlanID: 40
+parent: trunk0
+up: true
+addresses:
+  - address: 10.40.0.1/24
+---
+# The lab network.
+apiVersion: v1alpha1
+kind: VLANConfig
+name: lab0
+vlanID: 30
+parent: trunk0
+up: true
+addresses:
+  - address: 192.168.30.1/24
+---
+# The VRF: a routing table of its own for these links. The links keep their names in router.yaml
+# (zones, DHCP, DNS...); routald sees that they are in a VRF.
+apiVersion: v1alpha1
+kind: VRFConfig
+name: vrf-lab
+table: 100
+links: [core0, lab0]
+up: true
+---
+# BGP inside the VRF. Without `vrf`, the instance uses the default routing domain.
+apiVersion: v1alpha1
+kind: BGPInstanceConfig
+name: lab
+vrf: vrf-lab
+localASN: 65001
+routerID: 10.40.0.1
+advertise: [lab0] # announce the networks of these links
+neighbors:
+  - address: 10.40.0.2
+    peerASN: 65002
+---
+apiVersion: v1alpha1
+kind: NetworkDefaultActionConfig
+ingress: block
+---
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: talos-api
+portSelector:
+  ports: [50000]
+  protocol: tcp
+ingress:
+  - subnet: 192.168.64.0/24 # the management network

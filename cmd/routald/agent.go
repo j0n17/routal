@@ -34,6 +34,7 @@ type agent struct {
 	names      *leaseNames
 	blocker    *blocker
 	pd         *pdManager
+	vrf        vrfServices
 
 	applied [32]byte
 }
@@ -65,6 +66,8 @@ func (a *agent) run(ctx context.Context) error {
 func (a *agent) reconcile() error {
 	cfg, err := config.LoadFile(a.configPath)
 	if err != nil {
+		a.failClosed()
+
 		return err
 	}
 
@@ -76,7 +79,7 @@ func (a *agent) reconcile() error {
 		ensurePPPDevice()
 	}
 
-	errs := []error{a.applyFirewall(cfg, e)}
+	errs := []error{a.applyFirewall(cfg, e), a.vrf.reconcile(cfg, e)}
 	errs = append(errs, a.services.reconcile(services.Render(cfg, e, a.dirs)))
 	errs = append(errs, a.names.sync(cfg, a.services.generation("unbound")))
 	errs = append(errs, a.blocker.sync(cfg, a.services.generation("unbound")))
@@ -105,23 +108,19 @@ func (a *agent) applyFirewall(cfg *config.Config, e env.Env) error {
 		return nil
 	}
 
+	// the rules first: forwarding must never be on without them
+	if err := a.nft(ruleset); err != nil {
+		a.failClosed()
+
+		return err
+	}
+
 	if err := setSysctl("net/ipv4/conf/all/forwarding", *cfg.Forwarding.IPv4); err != nil {
 		return err
 	}
 
 	if err := setSysctl("net/ipv6/conf/all/forwarding", *cfg.Forwarding.IPv6); err != nil {
 		return err
-	}
-
-	cmd := exec.Command(a.nftBin, "-f", "-")
-	cmd.Stdin = strings.NewReader(ruleset)
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("nft: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 
 	a.applied = sum
@@ -133,6 +132,38 @@ func (a *agent) applyFirewall(cfg *config.Config, e env.Env) error {
 		slices.Compact(aliases))
 
 	return nil
+}
+
+func (a *agent) nft(script string) error {
+	cmd := exec.Command(a.nftBin, "-f", "-")
+	cmd.Stdin = strings.NewReader(script)
+
+	var stderr bytes.Buffer
+
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("nft: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	return nil
+}
+
+// failClosed blocks forwarding when the config cannot be applied and no routal table is there
+// (after a boot: rules do not survive it, while Talos or an earlier run may have forwarding on).
+// Rules already in place, from an earlier config, are kept.
+func (a *agent) failClosed() {
+	if a.applied != [32]byte{} || exec.Command(a.nftBin, "list", "table", "inet", nft.Table).Run() == nil {
+		return
+	}
+
+	if err := a.nft(nft.Closed()); err != nil {
+		log.Printf("error: cannot block forwarding: %v", err)
+
+		return
+	}
+
+	log.Printf("no rules were in place: forwarding is blocked until the config applies")
 }
 
 func setSysctl(name string, on bool) error {

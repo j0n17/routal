@@ -46,6 +46,10 @@ func unbound(cfg *config.Config, e env.Env, d Dirs) (string, []string) {
 	line("\tmodule-config: \"iterator\"")
 	line("\tip-freebind: yes")
 
+	if len(dns.Upstreams) == 0 {
+		line("\tdo-not-query-localhost: no") // the default upstream, Talos' resolver, is on localhost
+	}
+
 	var listen []string
 
 	for _, l := range dns.ListenLinks {

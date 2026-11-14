@@ -1,0 +1,8 @@
+# error: serviceName may only hold letters, digits, dots, dashes and underscores
+apiVersion: v1alpha1
+kind: PPPoEConfig
+name: p
+link: eth0
+username: u
+passwordFile: secrets/p
+serviceName: "isp;reboot"

@@ -1,6 +1,7 @@
 package pd
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 	"testing"
@@ -101,7 +102,29 @@ func TestParseAndRenew(t *testing.T) {
 	noPrefix.Options.Add(&dhcpv6.OptStatusCode{StatusCode: iana.StatusNoPrefixAvail, StatusMessage: "none"})
 	bad.AddOption(noPrefix)
 
-	if _, err := Parse(bad, iaid, now); err == nil {
-		t.Error("NoPrefixAvail accepted")
+	if _, err := Parse(bad, iaid, now); !errors.Is(err, ErrRefused) {
+		t.Errorf("NoPrefixAvail: %v, want ErrRefused (the client must solicit again)", err)
+	}
+
+	// an answer without a server identifier must not panic
+	anon, _ := dhcpv6.NewMessage()
+	anon.MessageType = dhcpv6.MessageTypeReply
+	anon.AddOption(iapd)
+
+	if _, err := Parse(anon, iaid, now); err == nil {
+		t.Error("answer without a server identifier accepted")
+	}
+
+	// a deprecated prefix (preferred lifetime 0) must not be renewed in a loop
+	dep, _ := dhcpv6.NewMessage()
+	dep.MessageType = dhcpv6.MessageTypeReply
+	dep.AddOption(dhcpv6.OptServerID(server))
+
+	old := &dhcpv6.OptIAPD{IaId: iaid}
+	old.Options.Add(&dhcpv6.OptIAPrefix{Prefix: n, PreferredLifetime: 0, ValidLifetime: time.Hour})
+	dep.AddOption(old)
+
+	if l, err := Parse(dep, iaid, now); err != nil || l.T1 < MinRenew || l.T2 < l.T1 {
+		t.Errorf("deprecated prefix: %+v %v", l, err)
 	}
 }

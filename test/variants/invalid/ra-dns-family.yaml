@@ -1,0 +1,7 @@
+# error: dnsServers must be IPv6 addresses
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: lan
+link: lan0
+prefixes: [fd00:1::/64]
+dnsServers: [192.168.1.1]

@@ -153,6 +153,64 @@ running its checks at boot and serving them over HTTP (no SSH needed).
 - Talos' strict reverse path filter drops replies that come back on another interface than the
   route to their source (seen with a test client having addresses on two LAN segments).
 
+## BGP and VRFs (2026-11-14)
+Talos has both: `BGPInstanceConfig` (embedded GoBGP: sessions, links to announce, learned routes
+installed as routes of the instance's table, optional `vrf`) and `VRFConfig`; also
+`RoutingRuleConfig`. Nothing to supervise in the extension. What routald had to learn:
+- nftables with a VRF: prerouting sees the link, then the VRF takes the packet, and the input and
+  forward hooks see the VRF device as `iifname` and the link as `sdifname` (only valid in those two
+  hooks). Output interfaces are always the links. So: the forward chain jumps to one chain per
+  source zone through two verdict maps (`iifname vmap`, `meta sdifname vmap`); `to: self` accepts
+  are rendered for both; reflected port forwards are marked in the forward chain (bit 0x10000000)
+  and masqueraded on that mark in postrouting, where `sdifname` is not available.
+- Services: the daemons run in the default routing domain. A link's addresses in a VRF are local in
+  the VRF's table only: Kea could not bind 192.168.30.1 ("Address not available"), and UDP answers
+  would be routed by the main table. routald adds a routing rule per address (`from <addr> lookup
+  <vrf table>`, priority 900) and sets `tcp_l3mdev_accept`, `udp_l3mdev_accept` and
+  `ip_nonlocal_bind`. One instance of each daemon then serves default and VRF links alike.
+- Verified on a Talos VM (UTM), with an Alpine VM holding a bird peer (AS 65002, announcing
+  198.51.100.0/24) and a client in two network namespaces on VLANs of the trunk; uplink and LAN in
+  `vrf-blue`, the BGP instance in the VRF, management in the default domain. Session established;
+  the peer learns the LAN, Talos installs the peer's route in table 100; client -> announced
+  network passes, peer -> client only on the allowed port; port forward from the uplink and its
+  reflection from the LAN; DHCP (static lease), DNS over UDP and TCP including upstream lookups,
+  NTP: all from inside the VRF. Talos leaves routald's routing rules alone.
+- Not tested: IPv6 in a VRF, RA / mDNS / UPnP in a VRF, BFD, several VRFs with overlapping
+  addresses (the per-address rules assume the router's addresses are unique across VRFs).
+
+## Code review (2026-11-14)
+Fixed after a full read of the code:
+- No rules and a config that cannot be applied (after a boot): routald now loads a table that drops
+  all forwarding, and applies the ruleset before the forwarding sysctls. Rules of an earlier config
+  are kept as before.
+- Port forwards only translate what is addressed to the router on the link (`fib daddr . iif type
+  local`): an IPv6 forward no longer captures the same port of every host behind the router. Their
+  Talos rule is limited to the target's family, and the forwarded port is dropped on the router
+  itself unless a rule opens it.
+- DHCPv6 client: an answer without a server identifier no longer panics; a refused renewal
+  (NoBinding, lifetimes 0) or a recreated link (PPPoE session back) solicits again instead of
+  retrying until the lease expires; a renewal is never sooner than 30 s (deprecated prefix);
+  addresses of links that did not exist yet are retried.
+- Unbound without `upstreams` forwards to Talos' resolver on localhost, which Unbound refuses by
+  default: `do-not-query-localhost: no`.
+- Named sets have `auto-merge` (overlapping subnets or ports in a group made nft reject the ruleset).
+- AdBlock cosmetic rules (`example.com##.ad`) were read as blocked domains.
+- Validation: `to: self` rules with `action: block` (they were ignored), PPPoE `serviceName`
+  (reached a shell), interface names over 15 characters, duplicate static leases, address families
+  of DHCP and RA options, RA prefixes with host bits.
+- `render-services` writes configs 0600 (they may hold secrets).
+
+Known and left as is:
+- UPnP opens its mapping range in Talos; routald drops it on the external link only (router
+  daemons need ephemeral ports there on the other links), so other zones reach router listeners in
+  1024-49151, if any.
+- `MasqueradeConfig` without `sourceSubnets` also translates IPv6.
+- A daemon whose new config is rejected keeps running the old one, but is not restarted with it if
+  it then exits.
+- The delegated prefix is not reloaded from its state file after a routald restart; a prefix that
+  changes meanwhile leaves the old addresses until they expire.
+- DHCP clients choose their DNS name (`wpad` is not refused).
+
 ## DNS blocking (2026-11-14)
 `DNSServerConfig.blocking`: lists by URL (hosts, domain lists, simple AdBlock `||name^` rules),
 inline domains, an allow list, NXDOMAIN or null answers. routald downloads the lists in the
@@ -163,8 +221,9 @@ an allowed name inside a blocked zone becomes a transparent zone.
 
 ## Test coverage
 `make cover` merges the unit tests' coverage with a routald built with `-cover` running the whole
-`make integration` scenario: 91% of statements. What is left is mostly error paths of the DHCPv6
-client (server gone during renewal, prefix change).
+`make integration` scenario: 89% of statements. What is left is mostly error paths of the DHCPv6
+client (server gone during renewal, prefix change) and the VRF support, which the lab's kernel
+cannot run (checked on a Talos VM instead).
 
 ## Talos kernel (v1.15.0-beta.0), checked on the VM
 | Feature | Kernel | Consequence |
@@ -176,7 +235,7 @@ client (server gone during renewal, prefix change).
 
 ## Next
 1. Kernel options upstream (siderolabs/pkgs, as modules): `PPPOE`, `NF_FLOW_TABLE(_INET)` + `NFT_FLOW_OFFLOAD`, `NET_SCH_CAKE`.
-2. WAN: test PPPoE and prefix delegation on Talos (VM); prefix delegation over PPPoE in the lab;
+2. WAN: prefix delegation over PPPoE in the lab;
    ISP DHCP options (e.g. option 90, VLAN priority); deprecate the old prefix (lifetime 0) when the
    ISP changes it.
 3. SQM: `SQMConfig` with HTB + fq_codel on the WAN (egress) and an ifb (ingress); cake when available.
@@ -189,4 +248,6 @@ client (server gone during renewal, prefix change).
    applied, upgrade to the installer, routald and the Talos ingress firewall checked. Containerlab
    (`make clab`) covers routald and the daemons; Talos in a container shares the host kernel and
    has no system extensions, so it needs the VM.
-9. VRRP for router HA; `routalctl` wrapper (validate, diff, apply) if `talosctl` + `routald` aren't enough.
+9. BGP/VRF: IPv6 and the other services in a VRF, BFD, a containerlab or QEMU test (the Docker
+   Desktop kernel has no VRF, so `make integration` cannot cover it).
+10. VRRP for router HA; `routalctl` wrapper (validate, diff, apply) if `talosctl` + `routald` aren't enough.

@@ -32,13 +32,17 @@ func TestRenderHomeRouter(t *testing.T) {
 		"add table inet routal\ndelete table inet routal\n",
 		"type filter hook forward priority filter; policy drop;",
 		"ct state established,related accept",
-		`iifname { "eth1" } oifname { "wan0" } accept comment "lan-to-wan"`,
-		`iifname { "wan0" } oifname { "eth1" } ip daddr { 192.168.1.10/32 } meta l4proto tcp th dport { 443 } accept comment "wan-to-nas-https"`,
+		"chain from_lan {\n\t\toifname { \"wan0\" } accept comment \"lan-to-wan\"\n",
+		"chain from_wan {\n\t\toifname { \"eth1\" } ip daddr { 192.168.1.10/32 } meta l4proto tcp th dport { 443 } accept comment \"wan-to-nas-https\"\n",
+		// each packet goes to the chain of its input link's zone; in a VRF the link is the slave device
+		`iifname vmap { "eth1" : jump from_lan, "wan0" : jump from_wan }`,
+		`meta sdifname vmap { "eth1" : jump from_lan, "wan0" : jump from_wan }`,
+		`meta sdifname { "eth1" } meta l4proto udp th dport { 53, 67 } accept comment "lan-dns-dhcp"`,
 		`iifname { "eth1" } meta l4proto udp th dport { 53, 67 } accept comment "lan-dns-dhcp"`,
 		`iifname { "eth1" } meta l4proto tcp th dport { 53 } accept comment "lan-dns-tcp"`,
-		"iifname \"lo\" accept\n\t\tmeta l4proto udp th dport { 53, 67, 1900, 5351 } drop\n\t\tmeta l4proto tcp th dport { 53, 5000 } drop\n",
+		"iifname \"lo\" accept\n\t\tmeta l4proto udp th dport { 53, 67, 1900, 5351 } drop\n\t\tmeta l4proto tcp th dport { 53, 443, 5000 } drop\n",
 		`iifname "wan0" meta l4proto udp th dport { 1024-49151 } drop comment "upnp: no mapping"`,
-		`iifname "wan0" meta nfproto ipv4 tcp dport { 443 } dnat ip to 192.168.1.10 comment "nas-https"`,
+		`iifname "wan0" fib daddr . iif type local meta nfproto ipv4 tcp dport { 443 } dnat ip to 192.168.1.10 comment "nas-https"`,
 		`oifname "wan0" ip saddr { 192.168.1.0/24 } masquerade comment "lan-out"`,
 	} {
 		if !strings.Contains(out, want) {
@@ -147,9 +151,9 @@ portGroups: [web]
 	out := nft.Render(cfg, env.Static())
 
 	for _, want := range []string{
-		"set addr_nas_v4 {\n\t\ttype ipv4_addr; flags interval;\n\t\telements = { 192.168.30.10/32 }\n\t}",
-		"set addr_nas_v6 {\n\t\ttype ipv6_addr; flags interval;\n\t\telements = { fd00:30::10/128 }\n\t}",
-		"set port_web {\n\t\ttype inet_service; flags interval;\n\t\telements = { 80, 443, 8000-8100 }\n\t}",
+		"set addr_nas_v4 {\n\t\ttype ipv4_addr; flags interval; auto-merge;\n\t\telements = { 192.168.30.10/32 }\n\t}",
+		"set addr_nas_v6 {\n\t\ttype ipv6_addr; flags interval; auto-merge;\n\t\telements = { fd00:30::10/128 }\n\t}",
+		"set port_web {\n\t\ttype inet_service; flags interval; auto-merge;\n\t\telements = { 80, 443, 8000-8100 }\n\t}",
 		`ip daddr @addr_nas_v4 meta l4proto tcp th dport @port_web accept comment "lan-to-servers"`,
 		`ip6 daddr @addr_nas_v6 meta l4proto tcp th dport @port_web accept comment "lan-to-servers"`,
 		`ip daddr @addr_printers_v4 meta l4proto tcp th dport @port_web accept comment "lan-to-servers"`,
@@ -270,10 +274,12 @@ internalLinks: [lan0]
 	for _, want := range []string{
 		// from the inside, to the public address
 		`iifname != "wan0" ip daddr { 203.0.113.5 } meta nfproto ipv4 tcp dport { 443 } dnat ip to 192.168.1.10:8443 comment "web reflection"`,
-		`iifname != "wan0" ct status dnat ip daddr 192.168.1.10 meta l4proto tcp th dport { 8443 } accept comment "web reflection"`,
-		`iifname != "wan0" ct status dnat ip daddr 192.168.1.10 meta l4proto tcp th dport { 8443 } masquerade comment "web reflection"`,
+		`iifname != "wan0" meta sdifname != "wan0" ct status dnat ip daddr 192.168.1.10 meta l4proto tcp th dport { 8443 } meta mark set meta mark | 0x10000000 accept comment "web reflection"`,
+		`meta mark & 0x10000000 == 0x10000000 ct status dnat ip daddr 192.168.1.10 meta l4proto tcp th dport { 8443 } masquerade comment "web reflection"`,
 		// UPnP
 		`iifname "wan0" oifname { "lan0" } ct status dnat accept comment "upnp"`,
+		`meta sdifname "wan0" oifname { "lan0" } ct status dnat accept comment "upnp"`,
+		`meta sdifname "wan0" meta l4proto tcp th dport { 1024-49151 } drop comment "upnp: no mapping"`,
 		"ct state established,related accept\n\t\tiifname { \"lan0\" } meta l4proto udp th dport { 1900, 5351 } accept comment \"upnp\"",
 		`iifname "wan0" meta l4proto tcp th dport { 1024-49151 } drop comment "upnp: no mapping"`,
 		"add table inet routal_upnp\n",
@@ -302,5 +308,12 @@ func TestRenderPPPoEClamp(t *testing.T) {
 
 	if i, j := strings.Index(out, clamp), strings.Index(out, want); i < 0 || i > j {
 		t.Errorf("MSS clamp missing or after the established accept:\n%s", out)
+	}
+}
+
+func TestClosed(t *testing.T) {
+	out := nft.Closed()
+	if !strings.Contains(out, "hook forward priority filter; policy drop;") || strings.Contains(out, "accept") {
+		t.Errorf("closed ruleset must only drop forwarded traffic:\n%s", out)
 	}
 }

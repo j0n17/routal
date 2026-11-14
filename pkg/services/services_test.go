@@ -232,3 +232,18 @@ func TestRadvdFollowsDelegatedPrefix(t *testing.T) {
 		t.Errorf("after:\n%s", after)
 	}
 }
+
+// Without upstreams the forwarder asks Talos' resolver, which is on localhost: Unbound refuses
+// localhost unless told otherwise.
+func TestUnboundDefaultUpstream(t *testing.T) {
+	cfg, err := config.Load([]byte("apiVersion: v1alpha1\nkind: DNSServerConfig\nlistenLinks: [lan0]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, svc := range services.Render(cfg, env.Static(), services.DefaultDirs) {
+		if svc.Name == "unbound" && !strings.Contains(svc.Config, "do-not-query-localhost: no") {
+			t.Errorf("missing do-not-query-localhost in:\n%s", svc.Config)
+		}
+	}
+}

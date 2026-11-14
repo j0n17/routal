@@ -12,6 +12,7 @@ machine, and the `routald` system extension turns it into a router.
 | Talos (unmodified) | routald extension |
 |---|---|
 | interfaces, VLANs, bonds, bridges, WireGuard, DHCP client, static routes | IP forwarding |
+| BGP (`BGPInstanceConfig`), VRFs (`VRFConfig`), policy routing (`RoutingRuleConfig`) | firewall, NAT and services that follow links into a VRF |
 | ingress firewall for the router itself | zone firewall for forwarded traffic, address/port groups |
 | A/B upgrades, `apply-config --mode try` (auto-rollback) | masquerade / SNAT, port forwards (with NAT loopback), UPnP |
 | | WAN: PPPoE, IPv6 prefix delegation, dynamic DNS |
@@ -33,6 +34,7 @@ my-router/
 | [`examples/reference/`](examples/reference/) | **every document and every field**, commented, with defaults |
 | [`examples/home-router/`](examples/home-router/) | WAN + LAN, DHCP, DNS, a port forward, UPnP |
 | [`examples/guest-and-vpn/`](examples/guest-and-vpn/) | guest VLAN isolated from the LAN, WireGuard remote access |
+| [`examples/bgp-vrf/`](examples/bgp-vrf/) | a network in its own VRF, announced to a core router over BGP, with DHCP/DNS/NTP inside the VRF |
 | [`examples/nas-vpn/`](examples/nas-vpn/) | NAS on its own VLAN, reachable from the LAN and the VPN only, dual stack, NTP, mDNS |
 
 All examples are checked by `make check` (routald, the real daemons, and `talosctl validate`).
@@ -105,6 +107,21 @@ Every field is in [`examples/reference/router.yaml`](examples/reference/router.y
 
 Links are kernel names or Talos `LinkAliasConfig` aliases. routald programs its own `inet routal`
 nftables table; Talos keeps `inet talos`. Unknown fields are errors.
+
+### BGP and VRFs
+
+Talos does both itself: `BGPInstanceConfig` (sessions, announced links, learned routes installed
+in the kernel) and `VRFConfig` (a routing table of its own for a set of links), in `talos.yaml`.
+routald does the rest, with nothing to declare in `router.yaml`:
+
+- a `to: self` rule for tcp/179 lets the neighbor in; zone rules decide what transits;
+- links in a VRF keep their names in zones, NAT and port forwards (in the firewall hooks the
+  kernel reports the VRF as the input interface; routald matches the link behind it);
+- DHCP, DNS and NTP serve links in a VRF: routald adds a routing rule for each of the router's
+  addresses there and sets the `l3mdev_accept` and `ip_nonlocal_bind` sysctls. The daemons' own
+  traffic (DNS upstreams, NTP sources) uses the default routing domain.
+
+Checked on a Talos VM against a bird peer (IPv4); see [`examples/bgp-vrf/`](examples/bgp-vrf/).
 
 ## Build and install
 

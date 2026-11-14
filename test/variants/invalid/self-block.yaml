@@ -1,0 +1,14 @@
+# error: rules to "self" can only accept
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: no-dns
+from: lan
+to: self
+action: block
+protocol: udp
+ports: [53]

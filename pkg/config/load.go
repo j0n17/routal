@@ -165,29 +165,11 @@ func (cfg *Config) add(node *yaml.Node) error {
 
 	switch header.Kind {
 	case "ForwardingConfig":
-		if cfg.Forwarding != nil {
-			return errors.New("duplicate ForwardingConfig")
-		}
-
-		cfg.Forwarding = &Forwarding{}
-
-		return decodeStrict(node, cfg.Forwarding)
+		return singleton(node, &cfg.Forwarding, header.Kind)
 	case "FirewallConfig":
-		if cfg.Firewall != nil {
-			return errors.New("duplicate FirewallConfig")
-		}
-
-		cfg.Firewall = &Firewall{}
-
-		return decodeStrict(node, cfg.Firewall)
+		return singleton(node, &cfg.Firewall, header.Kind)
 	case "DNSServerConfig":
-		if cfg.DNSServer != nil {
-			return errors.New("duplicate DNSServerConfig")
-		}
-
-		cfg.DNSServer = &DNSServer{}
-
-		return decodeStrict(node, cfg.DNSServer)
+		return singleton(node, &cfg.DNSServer, header.Kind)
 	case "NTPServerConfig":
 		return singleton(node, &cfg.NTPServer, header.Kind)
 	case "MDNSReflectorConfig":
@@ -380,6 +362,40 @@ func (cfg *Config) applyDefaults() {
 			cfg.RouterAdvertisements[i].RouterLifetime = 30 * time.Minute
 		}
 	}
+}
+
+// ServiceLinks returns the links the router's own services (DHCP, DNS, NTP, router
+// advertisements, UPnP, mDNS) serve, sorted.
+func (cfg *Config) ServiceLinks() []string {
+	var out []string
+
+	for _, d := range cfg.DHCPServers {
+		out = append(out, d.Link)
+	}
+
+	for _, ra := range cfg.RouterAdvertisements {
+		out = append(out, ra.Link)
+	}
+
+	if cfg.DNSServer != nil {
+		out = append(out, cfg.DNSServer.ListenLinks...)
+	}
+
+	if cfg.NTPServer != nil {
+		out = append(out, cfg.NTPServer.ListenLinks...)
+	}
+
+	if cfg.MDNSReflector != nil {
+		out = append(out, cfg.MDNSReflector.Links...)
+	}
+
+	if cfg.UPnP != nil {
+		out = append(out, cfg.UPnP.InternalLinks...)
+	}
+
+	slices.Sort(out)
+
+	return slices.Compact(out)
 }
 
 // ZoneLinks returns the links of a zone.

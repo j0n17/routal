@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,15 +34,7 @@ func linkAddr(e env.Env, link string, subnet netip.Prefix, v4 bool) (netip.Addr,
 	return netip.Addr{}, false
 }
 
-func listensOn(links []string, link string) bool {
-	for _, l := range links {
-		if l == link {
-			return true
-		}
-	}
-
-	return false
-}
+func listensOn(links []string, link string) bool { return slices.Contains(links, link) }
 
 func dnsLinks(cfg *config.Config) []string {
 	if cfg.DNSServer == nil {

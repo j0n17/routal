@@ -126,12 +126,17 @@ func (c *pdClient) run(ctx context.Context, stateDir string) {
 		backoff = 5 * time.Second
 
 		for lease != nil && ctx.Err() == nil {
-			if err := c.apply(lease, applied, stateDir); err != nil {
-				c.logf("applying %s: %v", lease.Prefix, err)
+			// a LAN link may not exist yet: retry until the renewal is due
+			for err := c.apply(lease, applied, stateDir); err != nil; err = c.apply(lease, lease, stateDir) {
+				c.logf("applying %s: %v (retrying)", lease.Prefix, err)
+
+				if time.Now().After(lease.Obtained.Add(lease.T1)) || !sleep(ctx, 10*time.Second) {
+					break
+				}
 			}
 
 			applied = lease
-			lease = c.keep(ctx, client, duid, iaid, lease)
+			lease = c.keep(ctx, client, duid, iaid, link, lease)
 		}
 
 		client.Close() //nolint:errcheck
@@ -204,7 +209,12 @@ func (c *pdClient) exchange(ctx context.Context, client *nclient6.Client, t dhcp
 }
 
 // keep waits for T1 and renews, then T2 and rebinds, until the lease expires (nil).
-func (c *pdClient) keep(ctx context.Context, client *nclient6.Client, duid dhcpv6.DUID, iaid [4]byte, l *pd.Lease) *pd.Lease {
+func (c *pdClient) keep(ctx context.Context, client *nclient6.Client, duid dhcpv6.DUID, iaid [4]byte, link string, l *pd.Lease) *pd.Lease {
+	index := 0
+	if iface, err := net.InterfaceByName(link); err == nil {
+		index = iface.Index
+	}
+
 	for _, step := range []struct {
 		at time.Duration
 		t  dhcpv6.MessageType
@@ -226,6 +236,14 @@ func (c *pdClient) keep(ctx context.Context, client *nclient6.Client, duid dhcpv
 				return next
 			}
 
+			// the server no longer has the lease, or the link was recreated (a PPPoE session that
+			// came back) and the socket is bound to the old one: start over
+			if iface, ierr := net.InterfaceByName(link); errors.Is(err, pd.ErrRefused) || ierr != nil || iface.Index != index {
+				c.logf("%v (soliciting again)", err)
+
+				return nil
+			}
+
 			c.logf("%v (retrying)", err)
 
 			if step.t == dhcpv6.MessageTypeRenew && time.Now().After(l.Obtained.Add(l.T2)) {
@@ -237,9 +255,6 @@ func (c *pdClient) keep(ctx context.Context, client *nclient6.Client, duid dhcpv
 			}
 		}
 	}
-
-	_, valid := l.Remaining(time.Now())
-	sleep(ctx, min(valid, 30*time.Second))
 
 	return nil
 }

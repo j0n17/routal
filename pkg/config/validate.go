@@ -16,8 +16,10 @@ var (
 	nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
 	linkRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@-]{0,31}$`)
 	// group names become nftables set names
-	groupRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,30}$`)
-	hostRe  = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,62})(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,62}))*$`)
+	groupRe       = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,30}$`)
+	serviceNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+	hostRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,62})(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,62}))*$`)
 )
 
 // Validate checks every document and the references between them.
@@ -150,6 +152,10 @@ func (cfg *Config) Validate() error {
 
 		errs = append(errs, checkProtoPorts(where, r.Protocol, cfg.RulePorts(r), false)...)
 
+		if r.To == SelfZone && r.Action == ActionBlock {
+			fail("%s: rules to %q can only accept (what no rule accepts is blocked by the Talos ingress firewall)", where, SelfZone)
+		}
+
 		if r.To == SelfZone && r.Action == ActionAccept && len(cfg.RulePorts(r)) == 0 {
 			fail("%s: rules to %q need a protocol and ports (they open router ports in the Talos ingress firewall)", where, SelfZone)
 		}
@@ -222,10 +228,37 @@ func (cfg *Config) Validate() error {
 			}
 		}
 
+		if d.LeaseTime < time.Minute {
+			fail("%s: leaseTime must be at least 1m", where)
+		}
+
+		if d.Domain != "" && !hostRe.MatchString(d.Domain) {
+			fail("%s: invalid domain %q", where, d.Domain)
+		}
+
+		if d.Gateway.IsValid() && !d.Gateway.Is4() {
+			fail("%s: gateway must be an IPv4 address", where)
+		}
+
+		for _, a := range d.DNSServers {
+			if !a.Is4() {
+				fail("%s: dnsServers must be IPv4 addresses, got %s", where, a)
+			}
+		}
+
+		leaseMACs, leaseAddrs := map[string]bool{}, map[netip.Addr]bool{}
+
 		for _, l := range d.StaticLeases {
-			if _, err := net.ParseMAC(l.MAC); err != nil {
+			mac, err := net.ParseMAC(l.MAC)
+			if err != nil {
 				fail("%s: static lease: invalid mac %q", where, l.MAC)
 			}
+
+			if leaseMACs[mac.String()] || leaseAddrs[l.Address] {
+				fail("%s: static lease %s: mac or address %s used twice", where, l.MAC, l.Address)
+			}
+
+			leaseMACs[mac.String()], leaseAddrs[l.Address] = true, true
 
 			if !l.Address.Is4() {
 				fail("%s: static lease %s: address must be IPv4", where, l.MAC)
@@ -361,6 +394,14 @@ func (cfg *Config) Validate() error {
 				fail("%s: prefix %s is not IPv6", where, p)
 			}
 		}
+
+		errs = append(errs, checkPrefixes(where, ra.Prefixes)...)
+
+		for _, a := range ra.DNSServers {
+			if !a.Is6() {
+				fail("%s: dnsServers must be IPv6 addresses, got %s", where, a)
+			}
+		}
 	}
 
 	errs = append(errs, cfg.validateWAN(checkName, checkLink)...)
@@ -454,8 +495,13 @@ func (cfg *Config) validateWAN(checkName func(kind, name string), checkLink func
 			fail("%s: mtu must be between 1280 and 1500", where)
 		}
 
-		if strings.ContainsAny(p.ServiceName, "\"\n\\ ") {
-			fail("%s: invalid serviceName", where)
+		// it goes on the command line pppd runs through a shell
+		if p.ServiceName != "" && !serviceNameRe.MatchString(p.ServiceName) {
+			fail("%s: serviceName may only hold letters, digits, dots, dashes and underscores", where)
+		}
+
+		if len(p.Interface) > 15 {
+			fail("%s: interface %q is longer than 15 characters", where, p.Interface)
 		}
 	}
 

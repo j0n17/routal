@@ -25,6 +25,8 @@ single
 ||opt.example^$third-party
 [Adblock Plus 2.0]
 bad_label-.example
+cosmetic.example##.ad-slot
+exception.example#@#.banner
 `))
 
 	want := []string{"ads.example.com", "tracker.example.net", "telemetry.example.org", "adserver.example.io"}

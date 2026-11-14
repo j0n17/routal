@@ -3,6 +3,11 @@
 // Talos keeps its own `inet talos` table (ingress firewall); a packet must be accepted by both.
 // Traffic to the router itself (`to: self`) is opened in Talos (see package talospatch); this
 // package only narrows it to the zone's links.
+//
+// Links in a VRF (Talos VRFConfig): in the input and forward hooks the kernel reports the VRF device
+// as the input interface and the link itself as the "slave device" (sdifname), so every match on
+// an input link is rendered for both. Prerouting runs before the VRF takes the packet, and output
+// interfaces are always the links themselves.
 package nft
 
 import (
@@ -20,6 +25,10 @@ const Table = "routal"
 
 // UPnPTable holds the mappings miniupnpd adds (UPnPConfig).
 const UPnPTable = "routal_upnp"
+
+// ReflectionMark is the packet mark bit set on reflected port forwards in the forward chain, where
+// the input link is known even inside a VRF, for the masquerade in postrouting.
+const ReflectionMark = 0x10000000
 
 // UPnP ports miniupnpd listens on, on the internal links (SSDP, IGD HTTP, NAT-PMP/PCP).
 var (
@@ -39,6 +48,7 @@ func Render(cfg *config.Config, e env.Env) string {
 	fmt.Fprintf(&b, "table inet %s {\n", Table)
 	r.sets(&b)
 	r.input(&b)
+	r.zoneChains(&b)
 	r.forward(&b)
 	r.prerouting(&b)
 	r.postrouting(&b)
@@ -60,6 +70,13 @@ func Render(cfg *config.Config, e env.Env) string {
 	}
 
 	return b.String()
+}
+
+// Closed returns a ruleset that blocks all forwarding, for when the config cannot be applied and
+// no rules are in place.
+func Closed() string {
+	return fmt.Sprintf("add table inet %[1]s\ndelete table inet %[1]s\n\ntable inet %[1]s {\n"+
+		"\tchain forward {\n\t\ttype filter hook forward priority filter; policy drop;\n\t}\n}\n", Table)
 }
 
 type renderer struct {
@@ -100,8 +117,10 @@ func (r renderer) input(b *strings.Builder) {
 		selfPorts[proto] = append(selfPorts[proto], pr...)
 
 		if len(links) > 0 {
-			fmt.Fprintf(&accepts, "\t\tiifname %s meta l4proto %s th dport %s accept comment %q\n",
-				r.links(links), l4proto(proto), ports(mergeRanges(pr)), comment)
+			for _, in := range inputLink {
+				fmt.Fprintf(&accepts, "\t\t%s %s meta l4proto %s th dport %s accept comment %q\n",
+					in, r.links(links), l4proto(proto), ports(mergeRanges(pr)), comment)
+			}
 		}
 	}
 
@@ -112,6 +131,12 @@ func (r renderer) input(b *strings.Builder) {
 		}
 
 		accept(r.cfg.ZoneLinks(rule.From), rule.Protocol, rulePorts, rule.Name)
+	}
+
+	// Forwarded ports are opened in Talos (its filter runs before the DNAT): what reaches the
+	// router itself on them, from another link or family, is dropped unless a rule opens it.
+	for _, pf := range r.cfg.PortForwards {
+		accept(nil, pf.Protocol, pf.Ports, "")
 	}
 
 	// UPnP: miniupnpd's ports on the internal links; the external port range is opened in Talos so
@@ -127,8 +152,10 @@ func (r renderer) input(b *strings.Builder) {
 		// only on the external link: router daemons use ephemeral ports in this range for replies
 		// conntrack cannot match (e.g. unicast answers to the mDNS reflector's multicast queries)
 		for _, p := range []config.Protocol{config.ProtocolTCP, config.ProtocolUDP} {
-			upnpDrops = append(upnpDrops, fmt.Sprintf("\t\tiifname %q meta l4proto %s th dport %s drop comment \"upnp: no mapping\"\n",
-				r.resolve(u.ExternalLink), p, ports(mergeRanges(u.ExternalPorts))))
+			for _, in := range inputLink {
+				upnpDrops = append(upnpDrops, fmt.Sprintf("\t\t%s %q meta l4proto %s th dport %s drop comment \"upnp: no mapping\"\n",
+					in, r.resolve(u.ExternalLink), p, ports(mergeRanges(u.ExternalPorts))))
+			}
 		}
 	}
 
@@ -171,6 +198,70 @@ func mergeRanges(in []config.PortRange) []config.PortRange {
 	return out
 }
 
+// inputLink are the two ways an input link is matched in the input and forward hooks: directly,
+// or as the slave device when the link is in a VRF.
+var inputLink = []string{"iifname", "meta sdifname"}
+
+// notFrom matches packets that did not come in through link, in a VRF or not.
+func (r renderer) notFrom(link string) string {
+	return fmt.Sprintf("iifname != %[1]q meta sdifname != %[1]q", r.resolve(link))
+}
+
+// zoneChain is the chain holding the forward rules of traffic coming from a zone.
+func zoneChain(zone string) string { return "from_" + zone }
+
+// zoneChains renders one chain per source zone with its rules, in config order. A link is in one
+// zone only, so a packet is only ever checked against the rules of its own zone.
+func (r renderer) zoneChains(b *strings.Builder) {
+	for _, zone := range r.cfg.Zones {
+		var rules strings.Builder
+
+		for _, rule := range r.cfg.Rules {
+			if rule.From == zone.Name && rule.To != config.SelfZone {
+				r.forwardRule(&rules, rule)
+			}
+		}
+
+		if rules.Len() > 0 {
+			fmt.Fprintf(b, "\tchain %s {\n%s\t}\n", zoneChain(zone.Name), rules.String())
+		}
+	}
+}
+
+func (r renderer) forwardRule(b *strings.Builder, rule config.FirewallRule) {
+	head := "oifname " + r.links(r.cfg.ZoneLinks(rule.To))
+
+	tail := []string{}
+	if rule.Log {
+		tail = append(tail, fmt.Sprintf("log prefix %q", "routal "+rule.Name+": "))
+	}
+
+	tail = append(tail, verdict(rule.Action), fmt.Sprintf("comment %q", rule.Name))
+
+	// one nft rule per combination of source/destination/port selector and address family
+	for _, src := range r.addrSels(rule.SourceSubnets, rule.SourceGroups) {
+		for _, dst := range r.addrSels(rule.DestinationSubnets, rule.DestinationGroups) {
+			for _, port := range portSels(rule.Ports, rule.PortGroups) {
+				for _, fam := range selFamilies(src, dst) {
+					m := []string{head}
+					m = append(m, src.match(fam, "saddr")...)
+					m = append(m, dst.match(fam, "daddr")...)
+
+					switch {
+					case rule.Protocol == "":
+					case port == "":
+						m = append(m, "meta l4proto "+l4proto(rule.Protocol))
+					default:
+						m = append(m, fmt.Sprintf("meta l4proto %s th dport %s", l4proto(rule.Protocol), port))
+					}
+
+					fmt.Fprintf(b, "\t\t%s\n", strings.Join(append(m, tail...), " "))
+				}
+			}
+		}
+	}
+}
+
 func (r renderer) forward(b *strings.Builder) {
 	fw := r.cfg.Firewall
 
@@ -185,52 +276,46 @@ func (r renderer) forward(b *strings.Builder) {
 
 	// UPnP mappings are DNAT rules miniupnpd adds in its own table; accept what they translated.
 	if u := r.cfg.UPnP; u != nil {
-		fmt.Fprintf(b, "\t\tiifname %q oifname %s ct status dnat accept comment \"upnp\"\n", r.resolve(u.ExternalLink), r.links(u.InternalLinks))
-	}
-
-	// Reflected port forwards are accepted from any link but the forward's own.
-	for _, pf := range r.cfg.PortForwards {
-		if *pf.Reflection {
-			fmt.Fprintf(b, "\t\tiifname != %q ct status dnat %s daddr %s meta l4proto %s th dport %s accept comment %q\n",
-				r.resolve(pf.InLink), pfFamily(pf), pf.ToAddress, pf.Protocol, ports(pfTargetPorts(pf)), pf.Name+" reflection")
+		for _, in := range inputLink {
+			fmt.Fprintf(b, "\t\t%s %q oifname %s ct status dnat accept comment \"upnp\"\n", in, r.resolve(u.ExternalLink), r.links(u.InternalLinks))
 		}
 	}
 
-	for _, rule := range r.cfg.Rules {
-		if rule.To == config.SelfZone {
+	// Reflected port forwards are accepted from any link but the forward's own, and marked for
+	// the masquerade in postrouting.
+	for _, pf := range r.cfg.PortForwards {
+		if *pf.Reflection {
+			fmt.Fprintf(b, "\t\t%s ct status dnat %s daddr %s meta l4proto %s th dport %s meta mark set meta mark | %#x accept comment %q\n",
+				r.notFrom(pf.InLink), pfFamily(pf), pf.ToAddress, pf.Protocol, ports(pfTargetPorts(pf)), ReflectionMark, pf.Name+" reflection")
+		}
+	}
+
+	// each packet goes to the chain of the zone of its input link
+	var jumps []string
+
+	seen := map[string]bool{}
+
+	for _, zone := range r.cfg.Zones {
+		if !slices.ContainsFunc(r.cfg.Rules, func(rule config.FirewallRule) bool {
+			return rule.From == zone.Name && rule.To != config.SelfZone
+		}) {
 			continue
 		}
 
-		head := fmt.Sprintf("iifname %s oifname %s", r.links(r.cfg.ZoneLinks(rule.From)), r.links(r.cfg.ZoneLinks(rule.To)))
+		for _, l := range zone.Links {
+			if k := r.resolve(l); !seen[k] {
+				seen[k] = true
 
-		tail := []string{}
-		if rule.Log {
-			tail = append(tail, fmt.Sprintf("log prefix %q", "routal "+rule.Name+": "))
-		}
-
-		tail = append(tail, verdict(rule.Action), fmt.Sprintf("comment %q", rule.Name))
-
-		// one nft rule per combination of source/destination/port selector and address family
-		for _, src := range r.addrSels(rule.SourceSubnets, rule.SourceGroups) {
-			for _, dst := range r.addrSels(rule.DestinationSubnets, rule.DestinationGroups) {
-				for _, port := range portSels(rule.Ports, rule.PortGroups) {
-					for _, fam := range selFamilies(src, dst) {
-						m := []string{head}
-						m = append(m, src.match(fam, "saddr")...)
-						m = append(m, dst.match(fam, "daddr")...)
-
-						switch {
-						case rule.Protocol == "":
-						case port == "":
-							m = append(m, "meta l4proto "+l4proto(rule.Protocol))
-						default:
-							m = append(m, fmt.Sprintf("meta l4proto %s th dport %s", l4proto(rule.Protocol), port))
-						}
-
-						fmt.Fprintf(b, "\t\t%s\n", strings.Join(append(m, tail...), " "))
-					}
-				}
+				jumps = append(jumps, fmt.Sprintf("%q : jump %s", k, zoneChain(zone.Name)))
 			}
+		}
+	}
+
+	if len(jumps) > 0 {
+		slices.Sort(jumps)
+
+		for _, in := range inputLink {
+			fmt.Fprintf(b, "\t\t%s vmap { %s }\n", in, strings.Join(jumps, ", "))
 		}
 	}
 
@@ -248,13 +333,13 @@ func (r renderer) sets(b *strings.Builder) {
 
 		for _, f := range []struct{ name, typ, elems string }{{"v4", "ipv4_addr", sel.v4lit}, {"v6", "ipv6_addr", sel.v6lit}} {
 			if f.elems != "" {
-				fmt.Fprintf(b, "\tset addr_%s_%s {\n\t\ttype %s; flags interval;\n\t\telements = %s\n\t}\n", g.Name, f.name, f.typ, f.elems)
+				fmt.Fprintf(b, "\tset addr_%s_%s {\n\t\ttype %s; flags interval; auto-merge;\n\t\telements = %s\n\t}\n", g.Name, f.name, f.typ, f.elems)
 			}
 		}
 	}
 
 	for _, g := range r.cfg.PortGroups {
-		fmt.Fprintf(b, "\tset port_%s {\n\t\ttype inet_service; flags interval;\n\t\telements = %s\n\t}\n", g.Name, ports(g.Ports))
+		fmt.Fprintf(b, "\tset port_%s {\n\t\ttype inet_service; flags interval; auto-merge;\n\t\telements = %s\n\t}\n", g.Name, ports(g.Ports))
 	}
 }
 
@@ -402,7 +487,8 @@ func (r renderer) prerouting(b *strings.Builder) {
 		match := fmt.Sprintf("meta nfproto %s %s dport %s", map[family]string{"ip": "ipv4", "ip6": "ipv6"}[fam], pf.Protocol, ports(pf.Ports))
 		action := []string{fmt.Sprintf("dnat %s to %s", fam, target), fmt.Sprintf("comment %q", pf.Name)}
 
-		m := []string{fmt.Sprintf("iifname %q", r.resolve(pf.InLink))}
+		// only what is addressed to the router on that link, not what it routes for others
+		m := []string{fmt.Sprintf("iifname %q fib daddr . iif type local", r.resolve(pf.InLink))}
 		m = append(m, fam.match("saddr", src)...)
 		m = append(m, match)
 		fmt.Fprintf(b, "\t\t%s\n", strings.Join(append(m, action...), " "))
@@ -481,12 +567,12 @@ func (r renderer) postrouting(b *strings.Builder) {
 		}
 	}
 
-	// Reflected connections come from the inside: without SNAT the server would answer the client
-	// directly, from an address the client did not connect to.
+	// Reflected connections (marked in the forward chain) come from the inside: without SNAT the
+	// server would answer the client directly, from an address the client did not connect to.
 	for _, pf := range r.cfg.PortForwards {
 		if *pf.Reflection {
-			fmt.Fprintf(b, "\t\tiifname != %q ct status dnat %s daddr %s meta l4proto %s th dport %s masquerade comment %q\n",
-				r.resolve(pf.InLink), pfFamily(pf), pf.ToAddress, pf.Protocol, ports(pfTargetPorts(pf)), pf.Name+" reflection")
+			fmt.Fprintf(b, "\t\tmeta mark & %#[1]x == %#[1]x ct status dnat %s daddr %s meta l4proto %s th dport %s masquerade comment %q\n",
+				ReflectionMark, pfFamily(pf), pf.ToAddress, pf.Protocol, ports(pfTargetPorts(pf)), pf.Name+" reflection")
 		}
 	}
 

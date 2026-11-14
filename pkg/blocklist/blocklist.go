@@ -32,8 +32,15 @@ func Parse(r io.Reader) []string {
 
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if i := strings.IndexByte(line, '#'); i >= 0 {
+
+		// a comment starts the line or follows a blank; "example.com##.ad" is an AdBlock cosmetic rule
+		switch i := strings.IndexByte(line, '#'); {
+		case i == 0:
+			continue
+		case i > 0 && (line[i-1] == ' ' || line[i-1] == '\t'):
 			line = strings.TrimSpace(line[:i])
+		case i > 0:
+			continue
 		}
 
 		if line == "" || line[0] == '!' || line[0] == '[' {

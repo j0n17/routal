@@ -117,7 +117,27 @@ func Generate(raw []byte, cfg *config.Config, current []byte) ([]byte, error) {
 	// Talos filters traffic to the router's own addresses in a prerouting chain that runs before
 	// routald's DNAT, so forwarded ports must be opened there too.
 	for _, pf := range cfg.PortForwards {
-		docs = append(docs, ruleFor(RulePrefix+"pf-"+pf.Name, pf.Protocol, pf.Ports, pf.SourceSubnets))
+		all := netip.MustParsePrefix("0.0.0.0/0")
+		if pf.ToAddress.Is6() {
+			all = netip.MustParsePrefix("::/0")
+		}
+
+		sources := []netip.Prefix{all}
+		if len(pf.SourceSubnets) > 0 {
+			sources = nil
+
+			for _, s := range pf.SourceSubnets {
+				if s.Addr().Is4() == pf.ToAddress.Is4() {
+					sources = append(sources, s)
+				}
+			}
+		}
+
+		if len(sources) == 0 {
+			continue // no source of the target's family: nothing is forwarded
+		}
+
+		docs = append(docs, ruleFor(RulePrefix+"pf-"+pf.Name, pf.Protocol, pf.Ports, sources))
 	}
 
 	// UPnP: miniupnpd on the internal links, and the external range its mappings may use (routald

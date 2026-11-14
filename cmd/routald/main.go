@@ -162,7 +162,8 @@ func run(args []string) error {
 		}
 
 		for _, svc := range services.Render(cfg, env.Static(), services.DefaultDirs) {
-			if err := os.WriteFile(filepath.Join(dir, svc.File), []byte(svc.Config), 0o644); err != nil {
+			// may hold secrets (PPPoE password, DNS provider token)
+			if err := os.WriteFile(filepath.Join(dir, svc.File), []byte(svc.Config), 0o600); err != nil {
 				return err
 			}
 

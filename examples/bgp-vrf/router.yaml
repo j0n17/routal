@@ -1,0 +1,79 @@
+# Firewall and services for the BGP + VRF router (talos.yaml next to this file).
+# Links in a VRF are used like any other link.
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: core
+links: [core0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lab
+links: [lab0]
+---
+# The lab reaches whatever the core router announces.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lab-to-core
+from: lab
+to: core
+---
+# From the core, only the lab's web server.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: core-to-lab-web
+from: core
+to: lab
+protocol: tcp
+ports: [80, 443]
+destinationSubnets: [192.168.30.10/32]
+---
+# The BGP session: the neighbor may connect to the router (Talos' BGP also connects out).
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: bgp
+from: core
+to: self
+protocol: tcp
+ports: [179]
+sourceSubnets: [10.40.0.2/32]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lab-services
+from: lab
+to: self
+protocol: udp
+ports: [53, 67, 123]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lab-dns-tcp
+from: lab
+to: self
+protocol: tcp
+ports: [53]
+---
+# DHCP, DNS and NTP for the lab. The daemons run in the default routing domain; routald lets them
+# serve the VRF (routing rules for the router's addresses there, l3mdev and nonlocal-bind sysctls).
+# Their own traffic (DNS upstreams, NTP sources) leaves through the default domain: mgmt0 here.
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lab
+link: lab0
+rangeStart: 192.168.30.100
+rangeEnd: 192.168.30.200
+domain: lab.home.arpa
+staticLeases:
+  - mac: 52:54:00:00:00:10
+    address: 192.168.30.10
+    hostname: web
+---
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lab0]
+localDomain: lab.home.arpa
+upstreams: [1.1.1.1, 9.9.9.9]
+---
+apiVersion: v1alpha1
+kind: NTPServerConfig
+listenLinks: [lab0]
