@@ -130,9 +130,28 @@ for the lab: an ISP with PPPoE (accel-ppp) and DHCPv6-PD once routald has the cl
   (`routald addr`) rather than a web service when `link` is set.
 - Secrets of router.yaml (`passwordFile`) are relative to it; talos-patch adds each file as another
   ExtensionServiceConfig configFile next to /etc/routal/router.yaml.
-- Tested in the namespace and containerlab labs against a simulated ISP. Not yet tested on Talos:
-  that /dev/ppp is usable from the extension container, and that Talos leaves the addresses and
-  the unreachable route routald adds alone.
+- Tested in the namespace and containerlab labs against a simulated ISP, then on Talos (below).
+
+## On Talos VMs (UTM, 2026-11-14)
+Router: the image from `make image`, upgraded twice with `talosctl upgrade --stage` to installers
+from `make installer` (local registry). ISP: an Alpine VM (Kea DHCPv6 with a prefix pool,
+pppoe-server, a blocklist and a dyndns2 server, NAT). Client: an Alpine VM on the servers VLAN
+running its checks at boot and serving them over HTTP (no SSH needed).
+- Prefix delegation: the /56 is obtained and renewed every 30 s; when the ISP VM was replaced, renew
+  and rebind failed and a new Solicit got the prefix back. Talos leaves routald's addresses and the
+  unreachable route alone. The client gets a SLAAC address in the delegated /64.
+- PPPoE: Talos gives extension services no host devices, so routald now creates /dev/ppp
+  (mknod 108:0, allowed). The session comes up, pppd's default route replaces Talos' DHCP one and
+  Talos does not put it back; the client reaches the Internet through the session.
+- Dynamic DNS reaches the provider; a provider error made inadyn exit and routald restart it every
+  5 s, hence the restart backoff (5 s doubling to 5 min).
+- Blocking (list from the ISP, inline names, subdomains), Kea leases and names, NTP, UPnP mapping,
+  port forward from the WAN, mDNS across the VLAN: all work.
+- Talos' ingress firewall drops the unicast answers to a "legacy" mDNS query (a query from a random
+  port, as dig sends): conntrack cannot match them with the reflector's multicast query. Devices
+  query from port 5353 in multicast, which works.
+- Talos' strict reverse path filter drops replies that come back on another interface than the
+  route to their source (seen with a test client having addresses on two LAN segments).
 
 ## DNS blocking (2026-11-14)
 `DNSServerConfig.blocking`: lists by URL (hosts, domain lists, simple AdBlock `||name^` rules),

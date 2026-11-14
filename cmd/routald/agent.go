@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/j0n17/routal/pkg/config"
 	"github.com/j0n17/routal/pkg/env"
 	"github.com/j0n17/routal/pkg/nft"
@@ -69,6 +71,10 @@ func (a *agent) reconcile() error {
 	e := env.Host()
 
 	a.pd.reconcile(cfg)
+
+	if len(cfg.PPPoE) > 0 {
+		ensurePPPDevice()
+	}
 
 	errs := []error{a.applyFirewall(cfg, e)}
 	errs = append(errs, a.services.reconcile(services.Render(cfg, e, a.dirs)))
@@ -136,4 +142,20 @@ func setSysctl(name string, on bool) error {
 	}
 
 	return os.WriteFile(filepath.Join("/proc/sys", name), []byte(v), 0o644)
+}
+
+// ensurePPPDevice creates /dev/ppp in the container: Talos does not pass host devices to extension
+// services, and pppd needs it (the kernel has PPP built in, character device 108:0).
+func ensurePPPDevice() {
+	if _, err := os.Stat("/dev/ppp"); err == nil {
+		return
+	}
+
+	if err := unix.Mknod("/dev/ppp", unix.S_IFCHR|0o600, int(unix.Mkdev(108, 0))); err != nil {
+		log.Printf("pppoe: cannot create /dev/ppp: %v", err)
+
+		return
+	}
+
+	log.Printf("pppoe: created /dev/ppp")
 }

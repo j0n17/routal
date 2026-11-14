@@ -34,6 +34,8 @@ RUN ./configure --firewall=nftables --ipv6 --igd2 --leasefile --portinuse \
 FROM alpine:${ALPINE_VERSION} AS daemons
 RUN apk add --no-cache nftables iproute2-minimal kea-dhcp4 kea-dhcp6 unbound radvd chrony avahi libnftnl libmnl libuuid \
         ppp-daemon rp-pppoe inadyn ca-certificates \
+    # Avahi only reflects: drop the services it would announce (ssh, sftp)
+    && rm -f /etc/avahi/services/*.service \
     # mount points: persistent state, and a tmpfs for pid files and sockets (the rootfs is read-only)
     && mkdir -p /var/lib/routal /run
 COPY --from=miniupnpd /out/ /

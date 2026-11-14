@@ -293,7 +293,8 @@ func (c *pdClient) apply(l, old *pd.Lease, stateDir string) error {
 	raw, _ := json.MarshalIndent(l, "", "  ")
 	_ = os.WriteFile(filepath.Join(stateDir, "pd-"+c.cfg.Name+".json"), raw, 0o644)
 
-	c.logf("%s (preferred %s, valid %s, renew in %s)", l.Prefix, preferred, valid, time.Until(l.Obtained.Add(l.T1)).Round(time.Second))
+	c.logf("%s (preferred %s, valid %s, renew in %s)", l.Prefix, preferred.Round(time.Second), valid.Round(time.Second),
+		time.Until(l.Obtained.Add(l.T1)).Round(time.Second))
 
 	return errors.Join(errs...)
 }
