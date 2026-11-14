@@ -5,6 +5,7 @@
 //	routald render <router.yaml>                      print the nftables ruleset
 //	routald render-services <router.yaml> <dir>       write the daemon configs (Kea, Unbound, radvd...) to dir
 //	routald talos-patch [-current mc.yaml] <router.yaml>  print the Talos machine config patch
+//	routald talos-render <talos.yaml>                 print talos.yaml with privateKeyFile & co. resolved
 package main
 
 import (
@@ -21,6 +22,7 @@ import (
 	"github.com/j0n17/routal/pkg/nft"
 	"github.com/j0n17/routal/pkg/services"
 	"github.com/j0n17/routal/pkg/talospatch"
+	"github.com/j0n17/routal/pkg/talosrender"
 )
 
 func main() {
@@ -31,7 +33,7 @@ func main() {
 }
 
 func usage() error {
-	return fmt.Errorf("usage: routald run|validate|render|render-services|talos-patch [args]")
+	return fmt.Errorf("usage: routald run|validate|render|render-services|talos-patch|talos-render [args]")
 }
 
 func run(args []string) error {
@@ -61,6 +63,26 @@ func run(args []string) error {
 			services:   newSupervisor(dirs),
 			names:      &leaseNames{ctl: "/usr/sbin/unbound-control", dirs: dirs},
 		}).run(ctx)
+	}
+
+	if cmd == "talos-render" {
+		if len(args) != 1 {
+			return usage()
+		}
+
+		raw, err := os.ReadFile(args[0])
+		if err != nil {
+			return err
+		}
+
+		out, err := talosrender.Render(raw, filepath.Dir(args[0]))
+		if err != nil {
+			return fmt.Errorf("%s: %w", args[0], err)
+		}
+
+		_, err = os.Stdout.Write(out)
+
+		return err
 	}
 
 	var (

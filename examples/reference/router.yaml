@@ -1,0 +1,316 @@
+# Reference: every Routal document and every field, with defaults in comments.
+# This file is valid as is (`routald validate`, `make check`); it goes with talos.yaml next to it.
+#
+# Network:
+#   wan0     ISP (DHCP from Talos)
+#   lan0     192.168.1.0/24   fd00:1::/64    trusted LAN
+#   guest0   192.168.20.0/24                 guest VLAN 20 on lan0
+#   srv0     192.168.30.0/24  fd00:30::/64   servers VLAN 30 on lan0 (NAS)
+#   wg0      10.8.0.0/24      fd00:8::/64    WireGuard remote access
+#
+# Every document needs `apiVersion: v1alpha1` and `kind`. Unknown fields are errors.
+# Links are kernel names or Talos LinkAliasConfig names. Ports are 443, "443" or "8000-9000".
+
+# --- Forwarding (one at most) ------------------------------------------------
+apiVersion: v1alpha1
+kind: ForwardingConfig
+ipv4: true # default true
+ipv6: true # default true
+---
+# --- Firewall: global settings (one at most) ---------------------------------
+apiVersion: v1alpha1
+kind: FirewallConfig
+forwardDefault: block # accept | block (default block): forwarded traffic no rule matched
+logBlocked: true      # log what forwardDefault drops (kernel log, prefix "routal blocked:")
+---
+# --- Zones: named groups of links; a link is in one zone at most -------------
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: guest
+links: [guest0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: servers
+links: [srv0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: vpn
+links: [wg0]
+---
+# --- Groups: named address and port sets (nftables sets), used by rules -------
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: nas # letters, digits and _ (becomes an nftables set name)
+subnets: [192.168.30.10/32, fd00:30::10/128] # IPv4 and IPv6 can be mixed
+---
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: admins
+subnets: [192.168.1.10/32, 192.168.1.11/32, 10.8.0.2/32]
+---
+apiVersion: v1alpha1
+kind: FirewallPortGroupConfig
+name: nas_ui
+ports: [443, "5000-5001"] # the protocol comes from the rule
+---
+apiVersion: v1alpha1
+kind: FirewallPortGroupConfig
+name: router_services
+ports: [53, 67, 123, 547, 5353] # DNS, DHCPv4, NTP, DHCPv6, mDNS
+---
+# --- Rules: stateful, evaluated in order; replies are always allowed ----------
+# Between zones: from a zone to another zone.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-to-wan
+from: lan
+to: wan
+action: accept # accept | block (default accept)
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: guest-to-wan
+from: guest
+to: wan
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: servers-to-wan
+from: servers
+to: wan
+---
+# All the matching fields. Literal lists and groups of the same direction cannot be mixed.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-to-nas
+from: lan
+to: servers
+protocol: tcp                 # tcp | udp | icmp | icmpv6 (default: any)
+portGroups: [nas_ui]          # or ports: [443, "5000-5001"] (tcp/udp only)
+sourceSubnets: [192.168.1.0/24, fd00:1::/64] # or sourceGroups: [...]
+destinationGroups: [nas]      # or destinationSubnets: [...]
+log: false                    # log matches (prefix "routal <name>:")
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: admins-ssh-nas
+from: vpn
+to: servers
+protocol: tcp
+ports: [22]
+sourceGroups: [admins]
+destinationSubnets: [192.168.30.10/32]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: vpn-to-nas
+from: vpn
+to: servers
+protocol: tcp
+portGroups: [nas_ui]
+destinationGroups: [nas]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: ping-lan-from-vpn
+from: vpn
+to: lan
+protocol: icmp
+---
+# A port forward also needs a rule to its target, after DNAT (address and port of the target).
+# Rules are evaluated in order: this one must come before the block below.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: wan-to-nas-https
+from: wan
+to: servers
+protocol: tcp
+ports: [443]
+destinationGroups: [nas]
+---
+# Explicit blocks matter for logging: the default policy would drop it anyway.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: wan-to-servers
+from: wan
+to: servers
+action: block
+log: true
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: guest-to-lan
+from: guest
+to: lan
+action: block
+---
+# To the router itself (`to: self`): needs a protocol and ports. talos-patch opens them in the
+# Talos ingress firewall (NetworkRuleConfig routal-<name>); routald limits them to the zone's links.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: wireguard
+from: wan
+to: self
+protocol: udp
+ports: [51820]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-services
+from: lan
+to: self
+protocol: udp
+portGroups: [router_services]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-tcp
+from: lan
+to: self
+protocol: tcp
+ports: [53]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: servers-services
+from: servers
+to: self
+protocol: udp
+portGroups: [router_services]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: guest-dhcp-dns
+from: guest
+to: self
+protocol: udp
+ports: [53, 67]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: vpn-dns
+from: vpn
+to: self
+protocol: udp
+ports: [53]
+---
+# --- Source NAT ----------------------------------------------------------------
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: out
+outLink: wan0
+sourceSubnets: [192.168.1.0/24, 192.168.20.0/24, 192.168.30.0/24, 10.8.0.0/24] # default: everything leaving wan0
+# snatAddress: 203.0.113.10 # fixed source address instead of the link's (same family as sourceSubnets)
+---
+# --- Destination NAT ------------------------------------------------------------
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: nas-https
+inLink: wan0
+protocol: tcp          # tcp | udp
+ports: [8443]          # one port, a range, or several
+toAddress: 192.168.30.10
+toPort: 443            # only with a single port; default: same port
+sourceSubnets: [198.51.100.0/24] # who may use it (default: anyone)
+reflection: true       # default true: also works from inside with the public address (NAT loopback)
+---
+# Devices open their own forwards (UPnP IGD, NAT-PMP, PCP), only to their own address.
+apiVersion: v1alpha1
+kind: UPnPConfig
+externalLink: wan0
+internalLinks: [lan0]
+externalPorts: ["1024-49151"]        # default; must not include the Talos API (50000-50001)
+internalSubnets: [192.168.1.0/24]    # default: the subnets of the internal links
+---
+# --- DHCPv4 (Kea) ------------------------------------------------------------------
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+subnet: 192.168.1.0/24    # default: the router's address on the link that contains rangeStart
+rangeStart: 192.168.1.100
+rangeEnd: 192.168.1.200
+leaseTime: 12h            # default 12h
+gateway: 192.168.1.1      # default: the router's address on the link
+# dnsServers: [192.168.1.1] # default: the router when DNSServerConfig listens on the link, else none
+domain: home.arpa         # default: DNSServerConfig localDomain
+staticLeases:
+  - mac: 52:54:00:00:00:20
+    address: 192.168.1.10
+    hostname: laptop      # published as laptop.home.arpa
+  - mac: 52:54:00:00:00:21
+    address: 192.168.1.11
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: guest
+link: guest0
+rangeStart: 192.168.20.100
+rangeEnd: 192.168.20.250
+leaseTime: 2h
+dnsServers: [9.9.9.9, 149.112.112.112] # guests use a public resolver, not the local names
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: servers
+link: srv0
+rangeStart: 192.168.30.100
+rangeEnd: 192.168.30.150
+staticLeases:
+  - mac: 52:54:00:00:00:10
+    address: 192.168.30.10
+    hostname: nas
+---
+# --- DNS (Unbound), one at most ---------------------------------------------------------
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0, srv0, wg0]          # the router's addresses on these links
+upstreams: [9.9.9.9, 2620:fe::fe]       # default: Talos' resolver (127.0.0.53)
+cacheSize: 10000                        # entries (default 10000)
+localDomain: home.arpa                  # answered locally, never forwarded
+registerDHCPLeases: true                # default true: DHCP hostnames become <name>.home.arpa
+localRecords:
+  - name: router                        # single labels get the local domain
+    addresses: [192.168.1.1, fd00:1::1]
+  - name: printer.home.arpa
+    addresses: [192.168.1.20]
+---
+# --- IPv6 router advertisements (radvd) --------------------------------------------------
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: lan
+link: lan0
+prefixes: [fd00:1::/64]   # default: every /64 on the link (follows a delegated prefix)
+routerLifetime: 30m       # default 30m
+# dnsServers: [fd00:1::1] # default: the router when DNSServerConfig listens on the link
+# managed: true           # stateful DHCPv6: not supported yet
+---
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: servers
+link: srv0
+prefixes: [fd00:30::/64]
+other: true               # also serve DNS options with stateless DHCPv6 (Kea); needs prefixes
+---
+# --- NTP server (chrony), one at most -----------------------------------------------------
+apiVersion: v1alpha1
+kind: NTPServerConfig
+listenLinks: [lan0, srv0] # DHCP on these links advertises the router as NTP server
+upstreams: [time.cloudflare.com, pool.ntp.org] # default: time.cloudflare.com (the Talos default)
+---
+# --- mDNS reflector (Avahi), one at most ---------------------------------------------------
+apiVersion: v1alpha1
+kind: MDNSReflectorConfig
+links: [lan0, srv0] # at least two; the firewall must allow udp 5353 from their zones

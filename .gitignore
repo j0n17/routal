@@ -1,2 +1,5 @@
 _out/
 .git-talos-fork/
+# secrets referenced by talos.yaml (privateKeyFile, presharedKeyFile); the examples hold placeholders
+secrets/
+!examples/*/secrets/

@@ -3,6 +3,7 @@ package services_test
 import (
 	"encoding/json"
 	"net/netip"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -153,8 +154,9 @@ func TestRenderNotReady(t *testing.T) {
 }
 
 func TestRenderOffline(t *testing.T) {
-	for _, ex := range []string{"home-router", "guest-and-vpn", "nas-vpn"} {
-		for name, s := range render(t, "../../examples/"+ex+"/router.yaml", env.Static()) {
+	files, _ := filepath.Glob("../../examples/*/router.yaml")
+	for _, ex := range files {
+		for name, s := range render(t, ex, env.Static()) {
 			if len(s.Warnings) > 0 {
 				t.Errorf("%s %s: warnings offline: %v", ex, name, s.Warnings)
 			}

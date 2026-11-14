@@ -11,9 +11,10 @@ GO = docker run --rm -v "$(CURDIR)":/src -v routal-gocache:/root/.cache/go-build
 test: ## run unit tests (in Docker)
 	$(GO) sh -c 'test -z "$$(gofmt -l .)" && go vet ./... && go test ./...'
 
-check: test ## also check every example's nftables ruleset and daemon configs with the real tools
+check: test ## also check every example with the real tools: nftables ruleset, daemon configs, talos.yaml
 	docker build --platform linux/$(ARCH) --target daemons -t routal-daemons:$(ARCH) .
 	docker run --rm --platform linux/$(ARCH) --cap-add NET_ADMIN -v "$(CURDIR)":/src:ro routal-daemons:$(ARCH) /src/hack/check-configs.sh
+	hack/check-talos.sh $(TALOS_VERSION) $(OUT)/talos-check
 
 integration: ## data-plane tests in network namespaces (router, LAN, NAS VLAN, WAN, VPN peer)
 	docker build --platform linux/$(ARCH) --target integration -t routal-integration:$(ARCH) .

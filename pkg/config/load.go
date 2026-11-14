@@ -57,7 +57,8 @@ func Load(data []byte) (*Config, error) {
 			return nil, fmt.Errorf("document %d: %w", i, err)
 		}
 
-		if len(node.Content) == 0 || (node.Content[0].Kind == yaml.MappingNode && len(node.Content[0].Content) == 0) {
+		if len(node.Content) == 0 || (node.Content[0].Kind == yaml.MappingNode && len(node.Content[0].Content) == 0) ||
+			node.Content[0].Tag == "!!null" {
 			continue // empty document
 		}
 

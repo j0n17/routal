@@ -7,6 +7,7 @@
 | Router logic | `routald`, a Talos **system extension** (baked into the image, starts at boot without network, versioned with the OS and rolled back with it). |
 | Plugins | Talos `ContainerConfig` declarative containers (UI, adblock, monitoring...), pulled at runtime. |
 | Config | Talos documents for the machine + Routal documents (`router.yaml`), delivered through `ExtensionServiceConfig`. |
+| Secrets | File references in talos.yaml (`privateKeyFile`, `presharedKeyFile`), resolved by `routald talos-render` where the config is applied (laptop or CI); the files stay out of git. Talos has no file indirection of its own, and the machine config keeps the inline key. |
 | Safety | Talos `apply-config --mode try --timeout` (auto-rollback) + A/B OS slots. |
 | Data plane | Kernel forwarding + nftables. routald owns the `inet routal` table (and `inet routal_upnp` for miniupnpd's mappings); Talos owns `inet talos`. |
 | Services | Kea (DHCPv4, stateless DHCPv6), Unbound (caching DNS), radvd (RA), chrony (NTP server), Avahi (mDNS reflector), miniupnpd (UPnP, built with nftables). Supervised by routald; each config is checked by the daemon before it is installed. dnsmasq was used first and replaced: Kea/Unbound are what OPNsense/pfSense run and scale further, at the cost of more daemons. |
@@ -128,4 +129,6 @@ reflection, UPnP mapping and secure mode, NTP, mDNS across the VLAN. Talos itsel
    or routald reading Unbound's answers (dnstap) and filling nftables sets.
 6. GitOps: CI workflow (render + `--mode try` + health check + confirm), then an on-device pull agent.
 7. Stateful DHCPv6 (`managed: true`, Kea), DHCPv6-PD server for downstream routers, Kea HA.
-8. VRRP for router HA; `routalctl` wrapper (validate, diff, apply) if `talosctl` + `routald` aren't enough.
+8. containerlab topology for the integration tests (same nodes as `make integration`, declared in a
+   `.clab.yml`, plus real NOS images as ISP/peers); Talos itself still needs a VM.
+9. VRRP for router HA; `routalctl` wrapper (validate, diff, apply) if `talosctl` + `routald` aren't enough.

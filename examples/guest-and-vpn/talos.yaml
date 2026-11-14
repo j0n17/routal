@@ -12,7 +12,7 @@ addresses:
 apiVersion: v1alpha1
 kind: WireguardConfig
 name: wg0
-privateKey: GA1E1VB+g41Dl0+UH2TMW9C5953y+moVg6JIIqkJbmw= # replace me
+privateKeyFile: secrets/wg0.key # wg genkey > secrets/wg0.key (kept out of git)
 listenPort: 51820
 peers:
   - publicKey: 735jkJdcVDninU5PzLJ/S+bfN6Q3QOk6svWrVLMJQAk= # the phone

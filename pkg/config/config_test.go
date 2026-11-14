@@ -87,3 +87,14 @@ links: [wan0]
 		})
 	}
 }
+
+func TestLoadEmptyDocuments(t *testing.T) {
+	cfg, err := config.Load([]byte("---\n# only a comment\n---\napiVersion: v1alpha1\nkind: FirewallConfig\n---\n---\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Firewall.ForwardDefault != config.ActionBlock {
+		t.Errorf("defaults not applied: %+v", cfg.Firewall)
+	}
+}

@@ -11,23 +11,63 @@ machine, and the `routald` system extension turns it into a router.
 
 | Talos (unmodified) | routald extension |
 |---|---|
-| interfaces, VLANs, bonds, bridges, WireGuard, DHCP client, BGP | IP forwarding |
-| ingress firewall for the router itself | zone firewall for forwarded traffic |
+| interfaces, VLANs, bonds, bridges, WireGuard, DHCP client, static routes, BGP | IP forwarding |
+| ingress firewall for the router itself | zone firewall for forwarded traffic, address/port groups |
 | A/B upgrades, `apply-config --mode try` (auto-rollback) | masquerade / SNAT, port forwards (with NAT loopback), UPnP |
 | API, `talosctl`, Kubernetes-free mode | DHCP (Kea), caching DNS (Unbound), IPv6 RA (radvd), NTP (chrony), mDNS reflector (Avahi) |
 
-Config is two sets of YAML documents, both kept in git:
+## Configuration
 
-- `talos.yaml`: Talos documents (links, addresses, ingress rules), see `examples/*/talos.yaml`
-- `router.yaml`: Routal documents read by routald, see `examples/*/router.yaml`
+A router is a directory in git:
+
+```
+my-router/
+├── talos.yaml      Talos documents: links, aliases, addresses, VLANs, WireGuard, ingress rules
+├── router.yaml     Routal documents, read by routald
+└── secrets/        key files referenced by talos.yaml (git-ignored, or decrypted by CI)
+```
+
+| Example | What it shows |
+|---|---|
+| [`examples/reference/`](examples/reference/) | **every document and every field**, commented, with defaults |
+| [`examples/home-router/`](examples/home-router/) | WAN + LAN, DHCP, DNS, a port forward, UPnP |
+| [`examples/guest-and-vpn/`](examples/guest-and-vpn/) | guest VLAN isolated from the LAN, WireGuard remote access |
+| [`examples/nas-vpn/`](examples/nas-vpn/) | NAS on its own VLAN, reachable from the LAN and the VPN only, dual stack, NTP, mDNS |
+
+All examples are checked by `make check` (routald, the real daemons, and `talosctl validate`).
+
+### Secrets
+
+Talos wants WireGuard keys inline. In `talos.yaml`, reference a file instead (path relative to
+`talos.yaml`), like a key path on an EdgeRouter:
+
+```yaml
+kind: WireguardConfig
+name: wg0
+privateKeyFile: secrets/wg0.key        # wg genkey > secrets/wg0.key
+peers:
+  - publicKey: ...
+    presharedKeyFile: secrets/phone.psk  # wg genpsk > secrets/phone.psk
+```
+
+`routald talos-render talos.yaml` prints the documents with the keys inlined; apply its output, never
+commit it. `secrets/` is in `.gitignore` (the examples hold placeholders).
+
+### Apply
 
 ```sh
 routald validate router.yaml
-routald render router.yaml                       # nftables ruleset it will apply
+routald render router.yaml                       # nftables ruleset routald will apply
 routald render-services router.yaml out/         # daemon configs (Kea, Unbound, radvd, chrony...)
-talosctl get mc -o yaml > current.yaml
-routald talos-patch -current current.yaml router.yaml > router-patch.yaml
-talosctl patch mc --patch @router-patch.yaml --mode try --timeout 2m   # reverts unless confirmed
+
+# machine (links, addresses, WireGuard...)
+routald talos-render talos.yaml > /tmp/talos.yaml
+talosctl patch mc --patch @/tmp/talos.yaml --mode try --timeout 2m
+
+# router
+talosctl get mc -o yaml > /tmp/current.yaml
+routald talos-patch -current /tmp/current.yaml router.yaml > /tmp/router-patch.yaml
+talosctl patch mc --patch @/tmp/router-patch.yaml --mode try --timeout 2m   # reverts unless confirmed
 ```
 
 `talos-patch` wraps router.yaml in an `ExtensionServiceConfig` (Talos restarts routald with the new
@@ -35,46 +75,59 @@ file) and turns `to: self` rules, port forwards and UPnP into Talos `NetworkRule
 (Talos filters traffic to the router's addresses before routald's DNAT runs). With `-current`, it
 also deletes the `routal-*` rules the config no longer needs (patches otherwise only add).
 
-## Router documents (`apiVersion: v1alpha1`)
+### Router documents (`apiVersion: v1alpha1`)
 
-| Kind | Purpose | Applied |
+Every field is in [`examples/reference/router.yaml`](examples/reference/router.yaml).
+
+| Kind | Purpose | Implemented by |
 |---|---|---|
-| `ForwardingConfig` | IPv4/IPv6 forwarding (default on) | yes |
-| `FirewallConfig` | default for forwarded traffic (`block`), `logBlocked` | yes |
-| `FirewallZoneConfig` | named group of links | yes |
-| `FirewallRuleConfig` | stateful rule from a zone to a zone or `self` | yes |
-| `FirewallAddressGroupConfig` | named IPv4/IPv6 subnets, used as `sourceGroups`/`destinationGroups` | yes (nftables sets) |
-| `FirewallPortGroupConfig` | named ports, used as `portGroups` | yes (nftables sets) |
-| `MasqueradeConfig` | source NAT on an outgoing link | yes |
-| `PortForwardConfig` | destination NAT on an incoming link, reflected for inside clients (`reflection`, default on) | yes |
-| `UPnPConfig` | devices open their own forwards (UPnP IGD, NAT-PMP, PCP), to their own address only | yes (miniupnpd) |
-| `DHCPServerConfig` | DHCPv4 pools and static leases (by MAC) | yes (Kea) |
-| `DNSServerConfig` | caching DNS, local domain, DHCP client names, static records | yes (Unbound) |
-| `RouterAdvertisementConfig` | IPv6 SLAAC, optionally DHCPv6 options (`other`) | yes (radvd, Kea) |
-| `NTPServerConfig` | time for local networks (does not touch the clock, Talos does) | yes (chrony) |
-| `MDNSReflectorConfig` | mDNS/Bonjour across links (printers, AirPlay, Chromecast across VLANs) | yes (Avahi) |
+| `ForwardingConfig` | IPv4/IPv6 forwarding (default on) | sysctls |
+| `FirewallConfig` | default for forwarded traffic (`block`), `logBlocked` | nftables |
+| `FirewallZoneConfig` | named group of links | nftables |
+| `FirewallRuleConfig` | stateful rule from a zone to a zone or `self`, first match wins | nftables |
+| `FirewallAddressGroupConfig` | named IPv4/IPv6 subnets, used as `sourceGroups`/`destinationGroups` | nftables sets |
+| `FirewallPortGroupConfig` | named ports, used as `portGroups` | nftables sets |
+| `MasqueradeConfig` | source NAT on an outgoing link | nftables |
+| `PortForwardConfig` | destination NAT on an incoming link, reflected for inside clients (`reflection`, default on) | nftables |
+| `UPnPConfig` | devices open their own forwards (UPnP IGD, NAT-PMP, PCP), to their own address only | miniupnpd |
+| `DHCPServerConfig` | DHCPv4 pools, options and static leases (by MAC) | Kea |
+| `DNSServerConfig` | caching DNS, local domain, DHCP client names, static records | Unbound |
+| `RouterAdvertisementConfig` | IPv6 SLAAC, optionally DHCPv6 options (`other`) | radvd, Kea |
+| `NTPServerConfig` | time for local networks (does not touch the clock, Talos does) | chrony |
+| `MDNSReflectorConfig` | mDNS/Bonjour across links (printers, AirPlay, Chromecast across VLANs) | Avahi |
 
-Links can be kernel names or Talos `LinkAliasConfig` aliases. routald programs its own
-`inet routal` nftables table; Talos keeps `inet talos`.
+Links are kernel names or Talos `LinkAliasConfig` aliases. routald programs its own `inet routal`
+nftables table; Talos keeps `inet talos`. Unknown fields are errors.
 
-## Build
+## Build and install
 
-Requires Docker (Go builds run in a container).
+Requires Docker (Go builds and Talos tools run in containers).
 
 ```sh
-make test
-make check                     # + every example's ruleset and daemon configs checked by nft, kea, unbound, radvd, chronyd
-make integration               # data-plane tests in network namespaces (router, LAN, NAS VLAN, WAN, VPN peer)
 make extension ARCH=arm64      # _out/routald-arm64.tar (flat extension for the imager)
 make image ARCH=arm64          # _out/metal-arm64.raw, Talos with routald baked in
 make installer ARCH=arm64      # _out/installer-arm64.tar, the Talos installer with routald (OCI image)
 make push-installer IMAGE=ghcr.io/<you>/routal-installer:v0.1.0
 ```
 
-Booting the image: apply `talosctl gen config --skip-k8s-etcd` plus your patches, with the install
-image set to your pushed installer (the stock one would drop the extension). Upgrades:
-`talosctl upgrade --image <installer>:<new tag>`; the extension is part of the image.
-Use a new tag per build: Talos reuses an image it already pulled under the same tag.
+Install: boot the image, apply `talosctl gen config --skip-k8s-etcd` plus your `talos.yaml`, with
+`UnattendedInstallConfig` pointing at your installer (see the reference; the stock installer would
+drop the extension). Upgrade: `talosctl upgrade --image <installer>:<new tag>`, then
+`talosctl reboot` (in Kubernetes-free mode Talos does not reboot by itself). Use a new tag per
+build: Talos reuses an image it already pulled under the same tag.
+
+## Tests
+
+```sh
+make test          # unit tests, gofmt, go vet
+make check         # + every example checked by the real tools: nft -c, kea -t, unbound-checkconf,
+                   #   radvd -c, chronyd -p, talosctl validate
+make integration   # data plane in network namespaces: router, LAN clients, NAS VLAN, WAN host, VPN peer
+```
+
+`make integration` runs the real routald and daemons in one privileged container (37 checks:
+DHCP, SLAAC, DNS, the firewall in IPv4 and IPv6, NAT, reflection, UPnP, NTP, mDNS). Talos itself
+(boot, upgrades, its ingress firewall) was tested in UTM VMs, see DESIGN.md.
 
 ## License
 
