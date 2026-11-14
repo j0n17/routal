@@ -11,7 +11,7 @@ machine, and the `routald` system extension turns it into a router.
 
 | Talos (unmodified) | routald extension |
 |---|---|
-| interfaces, VLANs, bonds, bridges, WireGuard, DHCP client, static routes, BGP | IP forwarding |
+| interfaces, VLANs, bonds, bridges, WireGuard, DHCP client, static routes | IP forwarding |
 | ingress firewall for the router itself | zone firewall for forwarded traffic, address/port groups |
 | A/B upgrades, `apply-config --mode try` (auto-rollback) | masquerade / SNAT, port forwards (with NAT loopback), UPnP |
 | API, `talosctl`, Kubernetes-free mode | DHCP (Kea), caching DNS (Unbound), IPv6 RA (radvd), NTP (chrony), mDNS reflector (Avahi) |
