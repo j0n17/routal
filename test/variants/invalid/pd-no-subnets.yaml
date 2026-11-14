@@ -1,0 +1,6 @@
+# error: subnets must not be empty
+apiVersion: v1alpha1
+kind: PrefixDelegationConfig
+name: isp
+link: wan0
+subnets: []

@@ -1,0 +1,5 @@
+# error: provider is required
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: d
+hostnames: [a.example.org]

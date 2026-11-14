@@ -175,18 +175,20 @@ func setSysctl(name string, on bool) error {
 	return os.WriteFile(filepath.Join("/proc/sys", name), []byte(v), 0o644)
 }
 
+var pppDevice = "/dev/ppp"
+
 // ensurePPPDevice creates /dev/ppp in the container: Talos does not pass host devices to extension
 // services, and pppd needs it (the kernel has PPP built in, character device 108:0).
 func ensurePPPDevice() {
-	if _, err := os.Stat("/dev/ppp"); err == nil {
+	if _, err := os.Stat(pppDevice); err == nil {
 		return
 	}
 
-	if err := unix.Mknod("/dev/ppp", unix.S_IFCHR|0o600, int(unix.Mkdev(108, 0))); err != nil {
-		log.Printf("pppoe: cannot create /dev/ppp: %v", err)
+	if err := unix.Mknod(pppDevice, unix.S_IFCHR|0o600, int(unix.Mkdev(108, 0))); err != nil {
+		log.Printf("pppoe: cannot create %s: %v", pppDevice, err)
 
 		return
 	}
 
-	log.Printf("pppoe: created /dev/ppp")
+	log.Printf("pppoe: created %s", pppDevice)
 }

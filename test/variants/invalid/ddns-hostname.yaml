@@ -1,0 +1,6 @@
+# error: invalid hostname
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: d
+provider: duckdns.org
+hostnames: ["not a host"]

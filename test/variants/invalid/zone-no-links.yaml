@@ -1,0 +1,5 @@
+# error: links must not be empty
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: []

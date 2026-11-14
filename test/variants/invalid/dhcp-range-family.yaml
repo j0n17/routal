@@ -1,0 +1,7 @@
+# error: rangeStart and rangeEnd must be IPv4
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+rangeStart: fd00::10
+rangeEnd: fd00::20

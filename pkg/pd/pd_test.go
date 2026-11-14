@@ -128,3 +128,64 @@ func TestParseAndRenew(t *testing.T) {
 		t.Errorf("deprecated prefix: %+v %v", l, err)
 	}
 }
+
+func TestParseRefusals(t *testing.T) {
+	iaid := IAID("isp")
+	now := time.Unix(1_800_000_000, 0)
+	server := &dhcpv6.DUIDLL{HWType: iana.HWTypeEthernet, LinkLayerAddr: net.HardwareAddr{2, 0, 0, 0, 0, 1}}
+
+	reply := func(opts ...dhcpv6.Option) *dhcpv6.Message {
+		m, _ := dhcpv6.NewMessage()
+		m.MessageType = dhcpv6.MessageTypeReply
+		m.AddOption(dhcpv6.OptServerID(server))
+
+		for _, o := range opts {
+			m.AddOption(o)
+		}
+
+		return m
+	}
+
+	// the server no longer knows the lease
+	if _, err := Parse(reply(&dhcpv6.OptStatusCode{StatusCode: iana.StatusNoBinding}), iaid, now); !errors.Is(err, ErrRefused) {
+		t.Errorf("NoBinding: %v", err)
+	}
+
+	// an answer for another IA_PD
+	if _, err := Parse(reply(&dhcpv6.OptIAPD{IaId: [4]byte{9, 9, 9, 9}}), iaid, now); err == nil {
+		t.Error("answer without our IA_PD accepted")
+	}
+
+	// prefixes that cannot be used: withdrawn (valid 0), longer than a /64, IPv4
+	iapd := &dhcpv6.OptIAPD{IaId: iaid}
+	for _, p := range []struct {
+		cidr  string
+		valid time.Duration
+	}{{"2001:db8:a00::/56", 0}, {"2001:db8:a00::/72", time.Hour}, {"192.0.2.0/24", time.Hour}} {
+		_, n, _ := net.ParseCIDR(p.cidr)
+		iapd.Options.Add(&dhcpv6.OptIAPrefix{Prefix: n, ValidLifetime: p.valid})
+	}
+
+	iapd.Options.Add(&dhcpv6.OptIAPrefix{ValidLifetime: time.Hour}) // no prefix at all
+
+	if _, err := Parse(reply(iapd), iaid, now); !errors.Is(err, ErrRefused) {
+		t.Errorf("unusable prefixes: %v", err)
+	}
+}
+
+// A lease that does not come from Parse (no server options kept) still makes a valid message.
+func TestMessageFromBareLease(t *testing.T) {
+	duid := DUID(net.HardwareAddr{0x52, 0x54, 0, 0, 0, 1})
+	server := &dhcpv6.DUIDLL{HWType: iana.HWTypeEthernet, LinkLayerAddr: net.HardwareAddr{2, 0, 0, 0, 0, 1}}
+	l := &Lease{Prefix: netip.MustParsePrefix("2001:db8:a00::/56"), ServerID: server.ToBytes()}
+
+	m, err := Message(dhcpv6.MessageTypeRebind, duid, IAID("isp"), 0, l)
+	if err != nil || m.Options.OneIAPD().Options.Prefixes()[0].Prefix.String() != "2001:db8:a00::/56" {
+		t.Errorf("rebind: %v %v", m, err)
+	}
+
+	l.ServerID = []byte{1}
+	if _, err := Message(dhcpv6.MessageTypeRenew, duid, IAID("isp"), 0, l); err == nil {
+		t.Error("renew with a broken server id accepted")
+	}
+}

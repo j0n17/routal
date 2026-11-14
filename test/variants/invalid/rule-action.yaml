@@ -1,0 +1,17 @@
+# error: action must be accept or block
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: x
+from: lan
+to: wan
+action: reject

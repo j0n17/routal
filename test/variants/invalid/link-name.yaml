@@ -1,0 +1,5 @@
+# error: invalid link name
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: ["bad link"]

@@ -247,3 +247,56 @@ func TestUnboundDefaultUpstream(t *testing.T) {
 		}
 	}
 }
+
+// On the router, what cannot be rendered yet (a link without its address) is a warning, and the
+// daemon is configured without it until the address is there.
+func TestRenderWarnings(t *testing.T) {
+	cfg, err := config.Load([]byte(`apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+---
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: lan
+link: lan0
+prefixes: [fd00:1::/64]
+other: true
+---
+apiVersion: v1alpha1
+kind: UPnPConfig
+externalLink: wan0
+internalLinks: [lan0]
+---
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: v6
+provider: duckdns.org
+hostnames: [home.example.org]
+link: wan0
+ipv6: true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := env.Static()
+	e.Offline = false
+
+	warned := map[string]bool{}
+
+	for _, svc := range services.Render(cfg, e, services.DefaultDirs) {
+		warned[svc.Name] = len(svc.Warnings) > 0
+
+		if svc.Name == "inadyn" && !strings.Contains(svc.Config, `checkip-command = "/usr/local/bin/routald addr -6 wan0"`) {
+			t.Errorf("inadyn does not read the IPv6 address of the link:\n%s", svc.Config)
+		}
+	}
+
+	if !warned["kea-dhcp6"] || !warned["miniupnpd"] {
+		t.Errorf("no warning for links without addresses: %v", warned)
+	}
+
+	if services.StaticRecords(&config.Config{}) != nil {
+		t.Error("records without a DNS server")
+	}
+}

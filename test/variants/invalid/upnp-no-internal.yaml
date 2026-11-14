@@ -1,0 +1,5 @@
+# error: internalLinks must not be empty
+apiVersion: v1alpha1
+kind: UPnPConfig
+externalLink: wan0
+internalLinks: []

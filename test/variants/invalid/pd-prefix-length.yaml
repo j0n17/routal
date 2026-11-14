@@ -1,0 +1,7 @@
+# error: prefixLength must be between 32 and 64
+apiVersion: v1alpha1
+kind: PrefixDelegationConfig
+name: isp
+link: wan0
+prefixLength: 20
+subnets: [{link: lan0, id: 0}]

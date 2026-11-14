@@ -77,8 +77,13 @@ func readKeaFile(path string, now time.Time, latest map[netip.Addr]Lease, active
 			return nil
 		}
 
-		if err != nil {
+		var bad *csv.ParseError
+		if errors.As(err, &bad) {
 			continue // a line being written
+		}
+
+		if err != nil {
+			return err
 		}
 
 		if len(rec) > 0 && rec[0] == "address" {

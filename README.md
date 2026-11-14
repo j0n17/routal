@@ -151,10 +151,11 @@ make integration   # data plane in network namespaces: router, LAN clients, NAS 
 make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
 ```
 
-Both run the real routald and daemons with `examples/nas-vpn` and the same 56 checks
+Both run the real routald and daemons with `examples/nas-vpn` and the same 64 checks
 (test/integration/checks.sh): DHCP, SLAAC, DNS, DNS blocking, the firewall in IPv4 and IPv6, NAT,
 reflection, UPnP, NTP, mDNS, then the WAN against a simulated ISP: IPv6 prefix delegation (Kea)
-with renewal, dynamic DNS, and a PPPoE session (pppoe-server).
+with renewal, an ISP that is down at start, goes down during the lease and comes back with
+another prefix, dynamic DNS, and a PPPoE session (pppoe-server).
 
 `test/variants/` holds router configs that exercise the options the examples do not, and invalid
 ones with the error they must produce (`# error:` on the first line). `make integration` needs only Docker (one privileged container, network

@@ -22,7 +22,7 @@ import (
 	"github.com/j0n17/routal/pkg/services"
 )
 
-const maxListSize = 64 << 20
+var maxListSize = 64 << 20
 
 // blocker keeps unbound's blocking zones in line with DNSServerConfig.blocking. Lists are
 // downloaded in the background and cached in the state directory (a failed refresh keeps the
@@ -217,7 +217,7 @@ func download(url, path string) error {
 		return fmt.Errorf("HTTP %s", resp.Status)
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxListSize+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxListSize)+1))
 	if err != nil {
 		return err
 	}
@@ -237,9 +237,12 @@ func download(url, path string) error {
 	return os.Rename(path+".new", path)
 }
 
+// resolvConf is the resolver config of the container, missing in a Talos extension service.
+var resolvConf = "/etc/resolv.conf"
+
 // httpClient resolves names with Talos' host DNS when the container has no resolv.conf.
 func httpClient() *http.Client {
-	if _, err := os.Stat("/etc/resolv.conf"); err == nil {
+	if _, err := os.Stat(resolvConf); err == nil {
 		return &http.Client{}
 	}
 

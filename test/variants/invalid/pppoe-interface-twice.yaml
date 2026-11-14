@@ -1,0 +1,14 @@
+# error: is used by another PPPoEConfig
+apiVersion: v1alpha1
+kind: PPPoEConfig
+name: p
+link: eth0
+username: u
+passwordFile: secrets/pppoe.pass
+---
+apiVersion: v1alpha1
+kind: PPPoEConfig
+name: q
+link: eth0
+username: u
+passwordFile: secrets/pppoe.pass

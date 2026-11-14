@@ -317,3 +317,15 @@ func TestClosed(t *testing.T) {
 		t.Errorf("closed ruleset must only drop forwarded traffic:\n%s", out)
 	}
 }
+
+func TestRenderSNATv6(t *testing.T) {
+	cfg, err := config.Load([]byte("apiVersion: v1alpha1\nkind: MasqueradeConfig\nname: fixed6\noutLink: wan0\nsnatAddress: 2001:db8::7\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := `oifname "wan0" meta nfproto ipv6 snat ip6 to 2001:db8::7 comment "fixed6"`
+	if out := nft.Render(cfg, env.Static()); !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+}

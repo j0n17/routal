@@ -1,0 +1,11 @@
+# error: is outside subnet
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+rangeStart: 192.168.1.100
+rangeEnd: 192.168.1.200
+subnet: 192.168.1.0/24
+staticLeases:
+  - mac: 52:54:00:00:00:10
+    address: 10.0.0.5

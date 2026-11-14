@@ -1,0 +1,7 @@
+# error: ports must not be empty
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: web
+inLink: wan0
+protocol: tcp
+toAddress: 192.168.1.10

@@ -1,0 +1,10 @@
+# error: address must be IPv4
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+rangeStart: 192.168.1.100
+rangeEnd: 192.168.1.200
+staticLeases:
+  - mac: 52:54:00:00:00:10
+    address: fd00::10

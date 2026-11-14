@@ -1,0 +1,7 @@
+# error: toAddress is required
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: web
+inLink: wan0
+protocol: tcp
+ports: [443]

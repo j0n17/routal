@@ -1,0 +1,10 @@
+# error: already has router advertisements
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: lan
+link: lan0
+---
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: lan2
+link: lan0

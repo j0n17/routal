@@ -1,0 +1,8 @@
+# error: longer than 15 characters
+apiVersion: v1alpha1
+kind: PPPoEConfig
+name: p
+link: eth0
+username: u
+passwordFile: secrets/pppoe.pass
+interface: ppp-to-my-provider

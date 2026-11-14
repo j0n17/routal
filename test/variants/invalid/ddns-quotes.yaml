@@ -1,0 +1,7 @@
+# error: cannot contain quotes or newlines
+apiVersion: v1alpha1
+kind: DynamicDNSConfig
+name: d
+provider: duckdns.org
+hostnames: [a.example.org]
+username: 'a"b'

@@ -1,0 +1,5 @@
+# error: invalid upstream
+apiVersion: v1alpha1
+kind: NTPServerConfig
+listenLinks: [lan0]
+upstreams: ["not a host"]

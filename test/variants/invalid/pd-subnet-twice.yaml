@@ -1,0 +1,6 @@
+# error: used twice
+apiVersion: v1alpha1
+kind: PrefixDelegationConfig
+name: isp
+link: wan0
+subnets: [{link: lan0, id: 1}, {link: lan1, id: 1}]

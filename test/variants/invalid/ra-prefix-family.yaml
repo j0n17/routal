@@ -1,0 +1,6 @@
+# error: is not IPv6
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: lan
+link: lan0
+prefixes: [192.168.1.0/24]

@@ -129,3 +129,52 @@ func TestSecretFileRead(t *testing.T) {
 		t.Error("missing secret file accepted")
 	}
 }
+
+func TestLookups(t *testing.T) {
+	if _, err := config.LoadFile("no-such-file.yaml"); err == nil {
+		t.Error("missing file accepted")
+	}
+
+	cfg, err := config.Load([]byte(`apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0, lan1]
+---
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: admins
+subnets: [192.168.1.10/32, "fd00:1::10/128"]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: ssh
+from: lan
+to: self
+protocol: tcp
+ports: [22]
+sourceGroups: [admins]
+---
+apiVersion: v1alpha1
+kind: NTPServerConfig
+listenLinks: [lan1, lan0]
+---
+apiVersion: v1alpha1
+kind: MDNSReflectorConfig
+links: [lan0, iot0]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := cfg.ZoneLinks("lan"); len(got) != 2 || cfg.ZoneLinks("nope") != nil {
+		t.Errorf("ZoneLinks = %v", got)
+	}
+
+	if got := cfg.RuleSources(cfg.Rules[0]); len(got) != 2 {
+		t.Errorf("RuleSources = %v", got)
+	}
+
+	if got := cfg.ServiceLinks(); strings.Join(got, ",") != "iot0,lan0,lan1" {
+		t.Errorf("ServiceLinks = %v", got)
+	}
+}

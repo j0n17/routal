@@ -1,0 +1,5 @@
+# error: ports must not be empty
+apiVersion: v1alpha1
+kind: FirewallPortGroupConfig
+name: g
+ports: []

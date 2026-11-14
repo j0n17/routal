@@ -1,0 +1,8 @@
+# error: gateway must be an IPv4 address
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+rangeStart: 192.168.1.100
+rangeEnd: 192.168.1.200
+gateway: fd00::1

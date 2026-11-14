@@ -1,0 +1,4 @@
+# error: forwardDefault must be accept or block
+apiVersion: v1alpha1
+kind: FirewallConfig
+forwardDefault: maybe

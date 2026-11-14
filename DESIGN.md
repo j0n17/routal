@@ -105,7 +105,7 @@ the LAN only. Both use the unmodified `examples/home-router` files; the MACs mat
 ## Network namespace and containerlab tests (`make integration`, `make clab`)
 Router, two LAN clients, a NAS on VLAN 30, a WAN host and a WireGuard peer, each in its own network
 namespace in one privileged container; the router runs routald with `examples/nas-vpn` plus a port
-forward and UPnP. 37 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
+forward and UPnP. 64 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
 dynamic names, reverse, forwarding), the NAS matrix in IPv4 and IPv6, masquerade, port forward,
 reflection, UPnP mapping and secure mode, NTP, mDNS across the VLAN. Talos itself is emulated
 (links, addresses, aliases); its ingress firewall is not.
@@ -221,9 +221,25 @@ an allowed name inside a blocked zone becomes a transparent zone.
 
 ## Test coverage
 `make cover` merges the unit tests' coverage with a routald built with `-cover` running the whole
-`make integration` scenario: 89% of statements. What is left is mostly error paths of the DHCPv6
-client (server gone during renewal, prefix change) and the VRF support, which the lab's kernel
-cannot run (checked on a Talos VM instead).
+`make integration` scenario: 96.8% of statements (2026-11-14).
+
+| Package | Coverage |
+|---|---|
+| pkg/blocklist, pkg/nft | 100% |
+| pkg/config | 99.8% |
+| pkg/services | 99.7% |
+| pkg/pd | 98.6% |
+| pkg/talospatch | 97.3% |
+| pkg/leases, pkg/talosrender | 96% |
+| cmd/routald | 91.0% |
+| pkg/env | 90.0% |
+
+Every validation error has an invalid variant (test/variants/invalid, 84 files). What is left:
+- the netlink side of the VRF support (the lab's kernel has no VRF; its logic is unit-tested
+  against a fake kernel, the real thing was checked on a Talos VM);
+- DHCPv6 client paths the lab's ISP does not produce: a refused renewal (Kea hands out a new prefix
+  instead), a lease that expires, a WAN link that disappears, kernel errors when adding addresses;
+- errors that cannot happen (YAML encoders writing to memory) or need a broken file system.
 
 ## Talos kernel (v1.15.0-beta.0), checked on the VM
 | Feature | Kernel | Consequence |

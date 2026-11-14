@@ -1,0 +1,5 @@
+# error: invalid localDomain
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+localDomain: "not a domain"

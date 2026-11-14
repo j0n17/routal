@@ -6,3 +6,4 @@ secrets/
 # containerlab lab directory
 test/clab/clab-routal/
 !test/variants/secrets/
+!test/variants/invalid/secrets/

@@ -230,7 +230,8 @@ put isp /tmp/isp-kea6.json <<CONF
     "pd-pools": [{"prefix": "2001:db8:aa00::", "prefix-len": 48, "delegated-len": 56}]}]
 }}
 CONF
-bg isp "mkdir -p /tmp/isp-kea && KEA_PIDFILE_DIR=/tmp/isp-kea KEA_LOCKFILE_DIR=/tmp/isp-kea kea-dhcp6 -c /tmp/isp-kea6.json > /tmp/isp-kea6.log 2>&1"
+isp_kea() { bg isp "mkdir -p /tmp/isp-kea && KEA_PIDFILE_DIR=/tmp/isp-kea KEA_LOCKFILE_DIR=/tmp/isp-kea kea-dhcp6 -c /tmp/isp-kea6.json >> /tmp/isp-kea6.log 2>&1"; }
+pd_log() { nsx router grep "prefix delegation isp" /tmp/routald.log; }
 # a dyndns2 server that records the updates
 bg isp "socat TCP-LISTEN:8053,fork,reuseaddr EXEC:/test/bin/ddns-reply"
 
@@ -262,6 +263,11 @@ period: 1m
 CONF
 nsx router sh -c "cat /tmp/overlay-wan.yaml >> /tmp/router2.yaml && routald validate /tmp/router2.yaml >/dev/null && cp /tmp/router2.yaml /tmp/router.yaml" || fail "WAN config rejected"
 
+# the ISP's DHCPv6 server is not up yet: routald keeps asking
+no_prefix() { pd_log | grep -q "no prefix yet"; }
+wait_for 30 no_prefix && pass "ISP not answering: routald keeps soliciting" || fail "no solicit: $(pd_log | tail -3)"
+isp_kea
+
 pd_lease() { nsx router cat /var/lib/routal/pd-isp.json 2>/dev/null | sed -n 's/.*"prefix": "\(.*\)".*/\1/p'; }
 got_pd() { [ -n "$(pd_lease)" ]; }
 wait_for 60 got_pd && PD=$(pd_lease) && pass "delegated prefix: $PD" || fail "no delegated prefix: $(nsx router grep 'prefix delegation' /tmp/routald.log | tail -3)"
@@ -278,6 +284,22 @@ wait_for 15 v6_out && pass "LAN -> Internet over IPv6 from the global address, n
 expect blocked "Internet -> laptop's global address" isp tcp "[$LAPTOP6]" 8080 TCP6
 renewed() { [ "$(nsx router grep -c "prefix delegation isp: $PD" /tmp/routald.log)" -ge 2 ]; }
 wait_for 40 renewed && pass "lease renewed at T1" || fail "no renewal: $(nsx router grep 'prefix delegation' /tmp/routald.log | tail -3)"
+
+# the ISP's server goes down: renewals are retried and the prefix stays while the lease is valid
+nsx isp pkill -f isp-kea6.json
+retried() { pd_log | grep -q "(retrying)"; }
+wait_for 60 retried && pass "ISP down: the renewal is retried ($(pd_log | grep '(retrying)' | head -1 | sed 's/.*isp: //' | cut -c1-60))" || fail "no retry: $(pd_log | tail -3)"
+nsx router ip -6 addr show dev "$R_LAN" | grep -q "inet6 $P::1/64" && pass "the prefix stays on lan0 meanwhile" || fail "prefix dropped while the lease is valid"
+# it comes back without its leases and with another pool (the ISP renumbered): the renewal brings
+# the new prefix, and the old one is removed
+nsx isp sed -i 's/2001:db8:aa00::/2001:db8:bb00::/' /tmp/isp-kea6.json
+isp_kea
+renumbered() { case "$(pd_lease)" in 2001:db8:bb*) true ;; *) false ;; esac; }
+wait_for 90 renumbered && NEW=$(pd_lease) && pass "ISP back with another pool: new prefix $NEW" || fail "no new prefix: $(pd_log | tail -4)"
+N=${NEW%%::/*}
+nsx router ip -6 addr show dev "$R_LAN" | grep -q "inet6 $N::1/64" && pass "lan0 got $N::1/64" || fail "lan0 new address: $(nsx router ip -6 addr show dev "$R_LAN" | grep inet6)"
+nsx router ip -6 addr show dev "$R_LAN" | grep -q "inet6 $P::1/64" && fail "old address still on lan0" || pass "old address removed from lan0"
+nsx router ip -6 route show type unreachable | grep -q "$PD" && fail "old unreachable route still there" || pass "old prefix no longer routed"
 
 ddns() { nsx isp grep -q "hostname=home.example.org&myip=203.0.113.2" /tmp/ddns.log; }
 wait_for 40 ddns && pass "dynamic DNS update: $(nsx isp head -1 /tmp/ddns.log | cut -c1-70)" || fail "no dynamic DNS update: $(nsx router grep inadyn /tmp/routald.log | tail -3)"

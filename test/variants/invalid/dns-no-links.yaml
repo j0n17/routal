@@ -1,0 +1,4 @@
+# error: listenLinks must not be empty
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: []

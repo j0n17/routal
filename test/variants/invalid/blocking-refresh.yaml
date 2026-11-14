@@ -1,0 +1,7 @@
+# error: refresh must be at least 1m
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+blocking:
+  domains: [ads.example.com]
+  refresh: 10s

@@ -1,0 +1,5 @@
+# error: subnets must not be empty
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: g
+subnets: []

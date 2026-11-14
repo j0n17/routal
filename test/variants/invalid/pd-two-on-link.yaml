@@ -1,0 +1,12 @@
+# error: already has prefix delegation
+apiVersion: v1alpha1
+kind: PrefixDelegationConfig
+name: isp
+link: wan0
+subnets: [{link: lan0, id: 0}]
+---
+apiVersion: v1alpha1
+kind: PrefixDelegationConfig
+name: isp2
+link: wan0
+subnets: [{link: lan1, id: 0}]

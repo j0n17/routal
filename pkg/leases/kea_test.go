@@ -41,3 +41,26 @@ func TestReadKea(t *testing.T) {
 		}
 	}
 }
+
+func TestReadKeaErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kea-leases4.csv")
+
+	if got, err := ReadKea4(path); err != nil || len(got) != 0 {
+		t.Errorf("no lease file yet: %v %v", got, err)
+	}
+
+	// malformed lines are skipped
+	os.WriteFile(path, []byte("address,hostname,expire,state\nnot-an-address,x,1,0\n\"a\"b,c\n"), 0o644) //nolint:errcheck
+
+	if got, err := ReadKea4(path); err != nil || len(got) != 0 {
+		t.Errorf("malformed lines: %v %v", got, err)
+	}
+
+	// a file that cannot be read is an error, not an endless retry
+	os.Mkdir(path+".1", 0o755) //nolint:errcheck
+
+	if _, err := ReadKea4(path); err == nil {
+		t.Error("unreadable lease file: no error")
+	}
+}

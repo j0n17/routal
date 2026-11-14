@@ -1,0 +1,7 @@
+# error: protocol must be tcp or udp
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: web
+inLink: wan0
+protocol: icmp
+toAddress: 192.168.1.10

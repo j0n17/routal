@@ -57,17 +57,22 @@ func (p *proc) running() bool {
 	}
 }
 
+// stopGrace is how long a daemon gets to exit after SIGTERM before it is killed.
+var stopGrace = 5 * time.Second
+
+// stop ends the daemon and the processes it started (its process group): a helper left behind
+// would keep the log pipe open and the stop would never return.
 func (p *proc) stop() {
 	if !p.running() {
 		return
 	}
 
-	_ = p.cmd.Process.Signal(syscall.SIGTERM)
+	_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGTERM)
 
 	select {
 	case <-p.done:
-	case <-time.After(5 * time.Second):
-		_ = p.cmd.Process.Kill()
+	case <-time.After(stopGrace):
+		_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 		<-p.done
 	}
 }
@@ -212,6 +217,7 @@ func command(argv []string, conf string, env []string) *exec.Cmd {
 	cmd := exec.Command(args[0], args[1:]...)
 	// extension services start with an empty environment
 	cmd.Env = append([]string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}, env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // see proc.stop
 
 	return cmd
 }

@@ -1,0 +1,15 @@
+# error: duplicate name "lan"
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan1]

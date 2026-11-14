@@ -55,9 +55,15 @@ func TestRenderErrors(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "bad.key"), []byte("not-a-key\n"), 0o600) //nolint:errcheck
 
+	key := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"
+	os.WriteFile(filepath.Join(dir, "two.key"), []byte(key+key), 0o600) //nolint:errcheck
+
 	for name, doc := range map[string]string{
 		"missing file": "privateKeyFile: nope.key\n",
 		"not a key":    "privateKeyFile: bad.key\n",
+		"empty path":   "privateKeyFile: \"\"\n",
+		"two keys":     "privateKeyFile: two.key\n",
+		"not yaml":     "privateKeyFile: [\n",
 	} {
 		if _, err := talosrender.Render([]byte(doc), dir); err == nil {
 			t.Errorf("%s: no error", name)
