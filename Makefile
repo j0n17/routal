@@ -6,7 +6,7 @@ OUT           ?= _out
 
 GO = docker run --rm -v "$(CURDIR)":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src $(GO_IMAGE)
 
-.PHONY: test check integration extension installer push-installer image clean
+.PHONY: test check integration clab extension installer push-installer image clean
 
 test: ## run unit tests (in Docker)
 	$(GO) sh -c 'test -z "$$(gofmt -l .)" && go vet ./... && go test ./...'
@@ -18,7 +18,11 @@ check: test ## also check every example with the real tools: nftables ruleset, d
 
 integration: ## data-plane tests in network namespaces (router, LAN, NAS VLAN, WAN, VPN peer)
 	docker build --platform linux/$(ARCH) --target integration -t routal-integration:$(ARCH) .
-	docker run --rm --platform linux/$(ARCH) --privileged routal-integration:$(ARCH)
+	docker run --rm --platform linux/$(ARCH) --privileged routal-integration:$(ARCH) /test/run.sh
+
+clab: ## the integration checks on a containerlab topology (containerlab runs in Docker; KEEP=1 keeps the lab)
+	docker build --platform linux/$(ARCH) --target integration -t routal-integration:$(ARCH) .
+	ARCH=$(ARCH) test/clab/run.sh
 
 extension: ## build the system extension as a flat tarball: $(OUT)/routald-$(ARCH).tar
 	mkdir -p $(OUT)

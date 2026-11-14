@@ -46,4 +46,6 @@ FROM daemons AS integration
 RUN apk add --no-cache iproute2 bind-tools curl socat wireguard-tools miniupnpc dhcpcd tcpdump busybox-extras
 COPY test/integration /test
 COPY examples/nas-vpn/router.yaml /test/nas-vpn.yaml
-ENTRYPOINT ["/test/run.sh"]
+ENV PATH=/test/bin:$PATH
+# containerlab keeps the nodes running; make integration runs /test/run.sh
+CMD ["sleep", "infinity"]

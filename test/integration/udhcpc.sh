@@ -1,6 +1,7 @@
 #!/bin/sh
 # udhcpc hook: configure the address and default route, record the options (never touches /etc/resolv.conf).
-ns=$(ip netns identify $$)
+ns=$(ip netns identify $$ 2>/dev/null)
+[ -n "$ns" ] || ns=$(hostname) # containerlab: one node per container
 case $1 in
 bound|renew)
 	ip addr flush dev "$interface" scope global 2>/dev/null

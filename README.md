@@ -123,11 +123,16 @@ make test          # unit tests, gofmt, go vet
 make check         # + every example checked by the real tools: nft -c, kea -t, unbound-checkconf,
                    #   radvd -c, chronyd -p, talosctl validate
 make integration   # data plane in network namespaces: router, LAN clients, NAS VLAN, WAN host, VPN peer
+make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
 ```
 
-`make integration` runs the real routald and daemons in one privileged container (37 checks:
-DHCP, SLAAC, DNS, the firewall in IPv4 and IPv6, NAT, reflection, UPnP, NTP, mDNS). Talos itself
-(boot, upgrades, its ingress firewall) was tested in UTM VMs, see DESIGN.md.
+Both run the real routald and daemons with `examples/nas-vpn` and the same 37 checks
+(test/integration/checks.sh): DHCP, SLAAC, DNS, the firewall in IPv4 and IPv6, NAT, reflection,
+UPnP, NTP, mDNS. `make integration` needs only Docker (one privileged container, network
+namespaces). `make clab` runs containerlab in its own container, on Linux or macOS with Docker
+Desktop, one container per node; `KEEP=1 make clab` leaves the lab up to poke at it
+(`docker exec -it clab-routal-router sh`). Talos itself (boot, upgrades, its ingress firewall) was
+tested in UTM VMs, see DESIGN.md.
 
 ## License
 

@@ -102,13 +102,17 @@ the LAN only. Both use the unmodified `examples/home-router` files; the MACs mat
   `network interfaces: {{mode:shared, address:"52:54:00:00:00:01"}, {mode:host, address:"52:54:00:00:00:02"}}`).
   Use an 8 GiB qcow2 converted from `make image`.
 
-## Network namespace tests (`make integration`)
+## Network namespace and containerlab tests (`make integration`, `make clab`)
 Router, two LAN clients, a NAS on VLAN 30, a WAN host and a WireGuard peer, each in its own network
 namespace in one privileged container; the router runs routald with `examples/nas-vpn` plus a port
 forward and UPnP. 37 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
 dynamic names, reverse, forwarding), the NAS matrix in IPv4 and IPv6, masquerade, port forward,
 reflection, UPnP mapping and secure mode, NTP, mDNS across the VLAN. Talos itself is emulated
 (links, addresses, aliases); its ingress firewall is not.
+The checks (test/integration/checks.sh) are shared: `make integration` runs them in network
+namespaces, `make clab` on test/clab/routal.clab.yml (one container per node, a Linux bridge as
+the LAN switch, containerlab's management network with its default routes removed). Next nodes
+for the lab: an ISP with PPPoE (accel-ppp) and DHCPv6-PD once routald has the clients.
 
 ## Talos kernel (v1.15.0-beta.0), checked on the VM
 | Feature | Kernel | Consequence |
@@ -129,6 +133,8 @@ reflection, UPnP mapping and secure mode, NTP, mDNS across the VLAN. Talos itsel
    or routald reading Unbound's answers (dnstap) and filling nftables sets.
 6. GitOps: CI workflow (render + `--mode try` + health check + confirm), then an on-device pull agent.
 7. Stateful DHCPv6 (`managed: true`, Kea), DHCPv6-PD server for downstream routers, Kea HA.
-8. containerlab topology for the integration tests (same nodes as `make integration`, declared in a
-   `.clab.yml`, plus real NOS images as ISP/peers); Talos itself still needs a VM.
+8. End-to-end Talos test in CI: QEMU VM (Linux runner with KVM) booting the built image, config
+   applied, upgrade to the installer, routald and the Talos ingress firewall checked. Containerlab
+   (`make clab`) covers routald and the daemons; Talos in a container shares the host kernel and
+   has no system extensions, so it needs the VM.
 9. VRRP for router HA; `routalctl` wrapper (validate, diff, apply) if `talosctl` + `routald` aren't enough.

@@ -1,0 +1,37 @@
+# Same topology as `make integration`, one container per node (make clab).
+#
+#   remote ── isp ── router ── sw ─┬─ laptop
+#                                  ├─ phone
+#                                  └─ nas (VLAN 30)
+#
+# eth0 of every node is containerlab's management network: test/clab/run.sh removes its default
+# routes so that traffic goes through the router.
+name: routal
+
+mgmt: # its own management network, away from the usual Docker ranges
+  network: routal-mgmt
+  ipv4-subnet: 10.254.253.0/24
+  ipv6-subnet: 3fff:10:254:253::/64
+
+topology:
+  defaults:
+    kind: linux
+    image: routal-integration:${ARCH:=arm64}
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0
+      net.ipv6.conf.default.disable_ipv6: 0
+  nodes:
+    router: {}
+    isp: {}
+    remote: {}
+    sw: {} # a Linux bridge: the LAN switch, VLAN 30 tagged
+    laptop: {}
+    phone: {}
+    nas: {}
+  links:
+    - endpoints: ["router:eth1", "isp:eth1"] # router eth1 = wan0
+    - endpoints: ["isp:eth2", "remote:eth1"]
+    - endpoints: ["router:eth2", "sw:eth1"] # router eth2 = lan0, srv0 = VLAN 30 on it
+    - endpoints: ["laptop:eth1", "sw:eth2"]
+    - endpoints: ["phone:eth1", "sw:eth3"]
+    - endpoints: ["nas:eth1", "sw:eth4"]
