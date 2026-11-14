@@ -296,6 +296,13 @@ localRecords:
     addresses: [192.168.1.1, fd00:1::1]
   - name: printer.home.arpa
     addresses: [192.168.1.20]
+blocking:                               # AdGuard / Pi-hole style, for every device using this DNS
+  lists:                                # hosts files, domain lists or AdBlock lists (||name^), by URL
+    - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+  domains: [doubleclick.net]            # blocked with their subdomains
+  allow: [s.youtube.com]                # never blocked, even inside a blocked domain
+  response: nxdomain                    # default; zero: answer 0.0.0.0 / ::
+  refresh: 24h                          # default 24h: how often the lists are downloaded again
 ---
 # --- IPv6 router advertisements (radvd) --------------------------------------------------
 apiVersion: v1alpha1

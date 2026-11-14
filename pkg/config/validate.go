@@ -348,8 +348,8 @@ func (cfg *Config) Validate() error {
 				}
 			}
 
-			if b.Response != "nxdomain" && b.Response != "null" {
-				fail("DNSServerConfig blocking: response must be nxdomain or null, got %q", b.Response)
+			if b.Response != "nxdomain" && b.Response != "zero" {
+				fail("DNSServerConfig blocking: response must be nxdomain or zero, got %q", b.Response)
 			}
 
 			if b.Refresh < time.Minute {

@@ -201,7 +201,7 @@ type DNSBlocking struct {
 	Lists   []string `yaml:"lists,omitempty"`
 	Domains []string `yaml:"domains,omitempty"` // blocked, with their subdomains
 	Allow   []string `yaml:"allow,omitempty"`   // never blocked (even inside a blocked domain)
-	// Response is nxdomain (default) or null (0.0.0.0 / ::).
+	// Response is nxdomain (default) or zero (the answer is 0.0.0.0 / ::).
 	Response string        `yaml:"response,omitempty"`
 	Refresh  time.Duration `yaml:"refresh,omitempty"` // default 24h
 }

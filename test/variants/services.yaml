@@ -1,5 +1,5 @@
 # Variant: services with non-default options: explicit DHCP subnet/gateway/DNS, several static
-# leases, DNS through Talos' resolver without lease names, null blocking from lists only, stateless
+# leases, DNS through Talos' resolver without lease names, blocking with 0.0.0.0 answers from lists only, stateless
 # DHCPv6 with explicit DNS, custom NTP upstreams, mDNS across three links.
 apiVersion: v1alpha1
 kind: FirewallZoneConfig
@@ -39,7 +39,7 @@ localRecords:
   - {name: nas.lan.example, addresses: [10.10.0.20, "fd10::20"]}
 blocking:
   lists: [https://example.org/hosts.txt, "http://lists.example.net/adblock.txt"]
-  response: "null"
+  response: zero
   refresh: 12h
 ---
 apiVersion: v1alpha1

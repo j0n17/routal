@@ -1,4 +1,4 @@
-# error: response must be nxdomain or null
+# error: response must be nxdomain or zero
 apiVersion: v1alpha1
 kind: DNSServerConfig
 listenLinks: [eth1]

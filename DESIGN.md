@@ -105,7 +105,7 @@ the LAN only. Both use the unmodified `examples/home-router` files; the MACs mat
 ## Network namespace and containerlab tests (`make integration`, `make clab`)
 Router, two LAN clients, a NAS on VLAN 30, a WAN host and a WireGuard peer, each in its own network
 namespace in one privileged container; the router runs routald with `examples/nas-vpn` plus a port
-forward and UPnP. 64 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
+forward and UPnP. 76 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
 dynamic names, reverse, forwarding), the NAS matrix in IPv4 and IPv6, masquerade, port forward,
 reflection, UPnP mapping and secure mode, NTP, mDNS across the VLAN. Talos itself is emulated
 (links, addresses, aliases); its ingress firewall is not.
@@ -213,7 +213,8 @@ Known and left as is:
 
 ## DNS blocking (2026-11-14)
 `DNSServerConfig.blocking`: lists by URL (hosts, domain lists, simple AdBlock `||name^` rules),
-inline domains, an allow list, NXDOMAIN or null answers. routald downloads the lists in the
+inline domains, an allow list, NXDOMAIN or 0.0.0.0 answers (`response: zero`; not called
+`null`, which YAML reads as "nothing"). routald downloads the lists in the
 background (cached in the state directory, a failed refresh keeps the previous copy, Talos' host
 DNS when the container has no resolv.conf) and pushes `local_zones` through unbound-control, so a
 refresh does not flush the cache. Subdomains of blocked names are folded into their parent's zone;

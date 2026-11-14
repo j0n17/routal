@@ -151,9 +151,11 @@ make integration   # data plane in network namespaces: router, LAN clients, NAS 
 make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
 ```
 
-Both run the real routald and daemons with `examples/nas-vpn` and the same 64 checks
+Both run the real routald and daemons with `examples/nas-vpn` and the same 76 checks
 (test/integration/checks.sh): DHCP, SLAAC, DNS, DNS blocking, the firewall in IPv4 and IPv6, NAT,
-reflection, UPnP, NTP, mDNS, then the WAN against a simulated ISP: IPv6 prefix delegation (Kea)
+reflection, UPnP, NTP, mDNS, options applied on the running router (SNAT to a fixed address, an
+IPv6 port forward with `toPort`, `forwardDefault: accept`, blocking with 0.0.0.0 answers, DHCPv6
+options, IPv6 forwarding off), then the WAN against a simulated ISP: IPv6 prefix delegation (Kea)
 with renewal, an ISP that is down at start, goes down during the lease and comes back with
 another prefix, dynamic DNS, and a PPPoE session (pppoe-server).
 

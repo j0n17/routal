@@ -219,6 +219,55 @@ bg nas "mkdir -p /tmp/nas-services /run/avahi-daemon && cp /tmp/smb.service /tmp
 mdns() { nsx laptop mdns-a | grep -q "c0 a8 1e 0a"; } # 192.168.30.10 in the answer
 wait_for 20 mdns && pass "laptop resolves nas.local (announced on VLAN 30) through the reflector" || fail "mDNS reflection: $(nsx laptop mdns-a)"
 
+echo "== options: SNAT address, IPv6 port forward with toPort, forwardDefault, 0.0.0.0 blocking, DHCPv6 options, forwarding per family"
+nsx router cp /tmp/router.yaml /tmp/router-base.yaml
+nsx router ip addr add 203.0.113.7/24 dev "$R_WAN" # a second public address, for the SNAT
+nsx laptop ip addr add fd00:1::50/64 dev "$CL_IF"   # a fixed IPv6 address, for the port forward
+expect blocked "before: servers -> LAN (no rule, default block)" nas tcp 192.168.1.50 8080
+put router /tmp/overlay-options.yaml <<CONF
+---
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: laptop-web-v6
+inLink: wan0
+protocol: tcp
+ports: [8443]
+toAddress: fd00:1::50
+toPort: 8080
+CONF
+nsx router sh -c "sed -e 's/^logBlocked: true/&\\nforwardDefault: accept/' \\
+	-e 's/^sourceSubnets: \\[192.168.1.0\\/24, 192.168.30.0\\/24, 10.8.0.0\\/24\\]/&\\nsnatAddress: 203.0.113.7/' \\
+	-e 's/^prefixes: \\[fd00:1::\\/64\\]/&\\nother: true/' \\
+	-e 's/^  allow: \\[ok.ads.example.com\\]/&\\n  response: zero/' /tmp/router-base.yaml > /tmp/router-opt.yaml &&
+	cat /tmp/overlay-options.yaml >> /tmp/router-opt.yaml && routald validate /tmp/router-opt.yaml >/dev/null && cp /tmp/router-opt.yaml /tmp/router.yaml" || fail "options config rejected"
+snat_on() { nsx router nft list table inet routal | grep -q "snat ip to 203.0.113.7"; }
+wait_for 20 snat_on || fail "options config not applied: $(nsx router tail -3 /tmp/routald.log)"
+nsx laptop tcp 203.0.113.1 80 | grep -q "isp 203.0.113.7" && pass "snatAddress: LAN -> Internet from 203.0.113.7" || fail "snatAddress: $(nsx laptop tcp 203.0.113.1 80)"
+expect ok "IPv6 port forward with toPort: WAN -> [router]:8443 -> laptop:8080" isp tcp '[2001:db8:ff::2]' 8443 TCP6
+expect ok "forwardDefault accept: servers -> LAN now passes" nas tcp 192.168.1.50 8080
+expect blocked "forwardDefault accept: an explicit block rule still blocks (WAN -> NAS:443)" isp tcp 192.168.30.10 443
+zeroed() { [ "$(q laptop 192.168.1.1 ads.example.com)" = 0.0.0.0 ]; }
+wait_for 30 zeroed && pass "blocking response zero: ads.example.com -> 0.0.0.0" || fail "zero response: $(q laptop 192.168.1.1 ads.example.com)"
+dhcp6_answer() { nsx laptop sh -c 'cat /tmp/dhcp6-* 2>&1'; } # the hook's file, named after the node
+dhcp6_info() { nsx laptop udhcpc6 -i "$CL_IF" -l -q -n -t 3 -T 1 -s /test/bin/udhcpc6.sh && dhcp6_answer | grep -q "dns=fd00:0001:0000:0000:0000:0000:0000:0001 domain=home.arpa"; }
+wait_for 40 dhcp6_info && pass "DHCPv6 options (other: true): $(dhcp6_answer)" || fail "DHCPv6 information request: $(dhcp6_answer) $(nsx router grep kea-dhcp6 /tmp/routald.log | tail -2)"
+
+# IPv6 forwarding off, IPv4 on
+nsx router sh -c "{ cat /tmp/router-base.yaml; printf -- '---\\napiVersion: v1alpha1\\nkind: ForwardingConfig\\nipv6: false\\n'; } > /tmp/router-nov6.yaml &&
+	routald validate /tmp/router-nov6.yaml >/dev/null && cp /tmp/router-nov6.yaml /tmp/router.yaml" || fail "forwarding config rejected"
+v6_forwarding() { [ "$(nsx router cat /proc/sys/net/ipv6/conf/all/forwarding)" = "$1" ]; }
+wait_for 20 v6_forwarding 0 && pass "ForwardingConfig ipv6: false turns IPv6 forwarding off" || fail "IPv6 forwarding still on"
+expect blocked "IPv6 forwarding off: LAN -> NAS:443 v6" laptop tcp '[fd00:30::10]' 443 TCP6
+expect ok "IPv4 still forwarded: LAN -> NAS:443 v4" laptop tcp 192.168.30.10 443
+
+# back to the base config
+nsx router cp /tmp/router-base.yaml /tmp/router.yaml
+nsx router ip addr del 203.0.113.7/24 dev "$R_WAN"
+wait_for 20 v6_forwarding 1 || fail "IPv6 forwarding not restored"
+v6_back() { nsx laptop tcp '[fd00:30::10]' 443 TCP6 | grep -q nas; }
+wait_for 40 v6_back && wait_for 30 blocked && pass "base config restored (IPv6 forwarded, NXDOMAIN blocking)" || fail "base config not restored"
+expect blocked "base config: servers -> LAN blocked again" nas tcp 192.168.1.50 8080
+
 echo "== WAN: IPv6 prefix delegation (routald DHCPv6 client, Kea on the ISP) and dynamic DNS (inadyn)"
 # the ISP delegates /56s out of 2001:db8:aa00::/48, with short timers to see a renewal
 put isp /tmp/isp-kea6.json <<CONF

@@ -205,8 +205,8 @@ blocking:
 		t.Errorf("not removed:\n%s", got)
 	}
 
-	// null response: every zone changes type
-	cfg.DNSServer.Blocking.Response = "null"
+	// zero response: every zone changes type
+	cfg.DNSServer.Blocking.Response = "zero"
 	_ = b.sync(cfg, 1)
 
 	if got := calls(t, log); !strings.Contains(got, "ads.example.com. always_null") {

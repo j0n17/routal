@@ -69,7 +69,7 @@ func (b *blocker) sync(cfg *config.Config, unboundGen int) error {
 			b.inputs = key
 		}
 
-		typ := map[string]string{"nxdomain": "always_nxdomain", "null": "always_null"}[bl.Response]
+		typ := map[string]string{"nxdomain": "always_nxdomain", "zero": "always_null"}[bl.Response]
 		for _, n := range b.block {
 			want[n] = typ
 		}
