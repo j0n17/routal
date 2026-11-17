@@ -178,3 +178,13 @@ links: [lan0, iot0]
 		t.Errorf("ServiceLinks = %v", got)
 	}
 }
+
+// A value made of line breaks is not an empty value: it must not become the default.
+func TestMultilineValueKept(t *testing.T) {
+	_, err := config.Load([]byte("apiVersion: v1alpha1\nkind: FirewallZoneConfig\nname: lan\nlinks: [lan0]\n---\n" +
+		"apiVersion: v1alpha1\nkind: FirewallZoneConfig\nname: wan\nlinks: [wan0]\n---\n" +
+		"apiVersion: v1alpha1\nkind: FirewallRuleConfig\nname: x\nfrom: wan\nto: lan\nprotocol: |4+\n\n\n"))
+	if err == nil || !strings.Contains(err.Error(), "unknown protocol") {
+		t.Fatalf("err = %v, want unknown protocol", err)
+	}
+}

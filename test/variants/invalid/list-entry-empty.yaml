@@ -1,0 +1,20 @@
+# error: empty list entry
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+# a lone "-" is a null entry: without this error the rule would accept every TCP port
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: web
+from: wan
+to: lan
+protocol: tcp
+ports:
+  -

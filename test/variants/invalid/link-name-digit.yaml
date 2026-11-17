@@ -1,0 +1,5 @@
+# error: invalid link name "0"
+apiVersion: v1alpha1
+kind: RouterAdvertisementConfig
+name: lan
+link: 0

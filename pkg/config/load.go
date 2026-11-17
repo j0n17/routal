@@ -225,8 +225,40 @@ func appendDoc[T any](node *yaml.Node, list *[]T) error {
 	return nil
 }
 
+// emptyEntry returns the line of a null entry in a list, 0 when there is none. YAML decodes one
+// (a lone "-", or ~) to nothing: `ports: [~]` would be a rule without ports, which matches them all.
+func emptyEntry(n *yaml.Node) int {
+	for _, c := range n.Content {
+		if n.Kind == yaml.SequenceNode && c.Kind == yaml.ScalarNode && c.Tag == "!!null" {
+			return c.Line
+		}
+
+		if line := emptyEntry(c); line != 0 {
+			return line
+		}
+	}
+
+	return 0
+}
+
+// quoteMultiline makes the encoder write strings with line breaks in double quotes: as a block
+// scalar, one made of line breaks only comes back empty, and an empty value is a default.
+func quoteMultiline(n *yaml.Node) {
+	if n.Kind == yaml.ScalarNode && strings.ContainsAny(n.Value, "\r\n") {
+		n.Style = yaml.DoubleQuotedStyle
+	}
+
+	for _, c := range n.Content {
+		quoteMultiline(c)
+	}
+}
+
 // decodeStrict decodes a document rejecting unknown fields (apiVersion and kind are allowed).
 func decodeStrict(node *yaml.Node, out any) error {
+	if line := emptyEntry(node); line != 0 {
+		return fmt.Errorf("line %d: empty list entry", line)
+	}
+
 	body := *node.Content[0]
 	body.Content = nil
 
@@ -238,6 +270,8 @@ func decodeStrict(node *yaml.Node, out any) error {
 
 		body.Content = append(body.Content, key, node.Content[0].Content[i+1])
 	}
+
+	quoteMultiline(&body)
 
 	raw, err := yaml.Marshal(&body)
 	if err != nil {

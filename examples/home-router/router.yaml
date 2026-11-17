@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../pkg/schema/router.schema.json
 # Router side, read by routald: one WAN (wan0), one LAN (lan0, 192.168.1.0/24).
 #
 #   routald validate examples/home-router/router.yaml

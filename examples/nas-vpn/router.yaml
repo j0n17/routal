@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../pkg/schema/router.schema.json
 # A NAS reachable from the LAN and over WireGuard, never from the Internet. IPv4 and IPv6.
 apiVersion: v1alpha1
 kind: FirewallConfig

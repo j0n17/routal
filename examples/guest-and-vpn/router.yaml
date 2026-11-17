@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../pkg/schema/router.schema.json
 # Home router plus an isolated guest network (VLAN 20) and WireGuard remote access.
 apiVersion: v1alpha1
 kind: FirewallConfig

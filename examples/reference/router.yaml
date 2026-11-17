@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../pkg/schema/router.schema.json
 # Reference: every Routal document and every field, with defaults in comments.
 # This file is valid as is (`routald validate`, `make check`); it goes with talos.yaml next to it.
 #
@@ -9,6 +10,7 @@
 #   wg0      10.8.0.0/24      fd00:8::/64    WireGuard remote access
 #
 # Every document needs `apiVersion: v1alpha1` and `kind`. Unknown fields are errors.
+# The first line gives editors the JSON schema (completion, documentation, errors): see the README.
 # Links are kernel names or Talos LinkAliasConfig names. Ports are 443, "443" or "8000-9000".
 
 # --- Forwarding (one at most) ------------------------------------------------

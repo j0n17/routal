@@ -1,0 +1,5 @@
+# error: invalid link name "wan-uplink-fiber"
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan-uplink-fiber]

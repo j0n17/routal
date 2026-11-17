@@ -1,0 +1,1279 @@
+{
+  "$id": "https://raw.githubusercontent.com/j0n17/routal/main/pkg/schema/router.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "DHCPServerConfig": {
+      "additionalProperties": false,
+      "description": "DHCPServer serves IPv4 leases on a link (kind: DHCPServerConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "dnsServers": {
+          "description": "DNSServers given to clients (default: the router when DNSServerConfig listens on the link).",
+          "items": {
+            "anyOf": [
+              {
+                "format": "ipv4"
+              },
+              {
+                "format": "ipv6"
+              }
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "domain": {
+          "description": "Domain given to clients (default: the localDomain of DNSServerConfig).",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "gateway": {
+          "anyOf": [
+            {
+              "format": "ipv4"
+            },
+            {
+              "format": "ipv6"
+            }
+          ],
+          "description": "Gateway given to clients (default: the router's address on the link).",
+          "type": "string"
+        },
+        "kind": {
+          "const": "DHCPServerConfig"
+        },
+        "leaseTime": {
+          "description": "LeaseTime of the leases (default 12h, at least 1m).",
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "type": "string"
+        },
+        "link": {
+          "description": "Link the leases are served on.",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        "name": {
+          "description": "Name of the DHCP server.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "rangeEnd": {
+          "anyOf": [
+            {
+              "format": "ipv4"
+            },
+            {
+              "format": "ipv6"
+            }
+          ],
+          "description": "RangeEnd is the last address of the pool.",
+          "type": "string"
+        },
+        "rangeStart": {
+          "anyOf": [
+            {
+              "format": "ipv4"
+            },
+            {
+              "format": "ipv6"
+            }
+          ],
+          "description": "RangeStart is the first address of the pool.",
+          "type": "string"
+        },
+        "staticLeases": {
+          "description": "StaticLeases pin addresses to devices.",
+          "items": {
+            "$ref": "#/definitions/DHCPStaticLease"
+          },
+          "type": "array"
+        },
+        "subnet": {
+          "description": "Subnet defaults to the router's address on the link that contains rangeStart.",
+          "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "link",
+        "rangeStart",
+        "rangeEnd"
+      ],
+      "type": "object"
+    },
+    "DHCPStaticLease": {
+      "additionalProperties": false,
+      "description": "DHCPStaticLease pins an address to a MAC.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "format": "ipv4"
+            },
+            {
+              "format": "ipv6"
+            }
+          ],
+          "description": "Address the device always gets; inside the subnet.",
+          "type": "string"
+        },
+        "hostname": {
+          "description": "Hostname published in DNS as <hostname>.<localDomain>.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "mac": {
+          "description": "MAC address of the device (aa:bb:cc:dd:ee:ff).",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "mac",
+        "address"
+      ],
+      "type": "object"
+    },
+    "DNSBlocking": {
+      "additionalProperties": false,
+      "description": "DNSBlocking is an AdGuard/Pi-hole style blocklist for the DNS server.",
+      "properties": {
+        "allow": {
+          "description": "never blocked (even inside a blocked domain)",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "domains": {
+          "description": "blocked, with their subdomains",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "lists": {
+          "description": "Lists are URLs of hosts files, domain lists or AdBlock-style lists (||domain^), downloaded by routald and refreshed every Refresh.",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "refresh": {
+          "description": "default 24h",
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "type": "string"
+        },
+        "response": {
+          "description": "Response is nxdomain (default) or zero (the answer is 0.0.0.0 / ::).",
+          "enum": [
+            "nxdomain",
+            "zero"
+          ]
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "DNSRecord": {
+      "additionalProperties": false,
+      "description": "DNSRecord is a static local DNS record.",
+      "properties": {
+        "addresses": {
+          "description": "Addresses of the name, IPv4 (A) and IPv6 (AAAA).",
+          "items": {
+            "anyOf": [
+              {
+                "format": "ipv4"
+              },
+              {
+                "format": "ipv6"
+              }
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Name of the record; a single label gets the local domain.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "addresses"
+      ],
+      "type": "object"
+    },
+    "DNSServerConfig": {
+      "additionalProperties": false,
+      "description": "DNSServer is the caching DNS forwarder for local networks (kind: DNSServerConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "blocking": {
+          "$ref": "#/definitions/DNSBlocking",
+          "description": "Blocking answers blocked names with NXDOMAIN (ads, trackers): lists by URL and inline names."
+        },
+        "cacheSize": {
+          "description": "CacheSize in entries (default 10000).",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "DNSServerConfig"
+        },
+        "listenLinks": {
+          "description": "ListenLinks are the links the server answers on (the router's addresses there).",
+          "items": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+            "type": [
+              "string",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "localDomain": {
+          "description": "LocalDomain is answered locally and never forwarded (e.g. home.arpa).",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "localRecords": {
+          "description": "LocalRecords are static names.",
+          "items": {
+            "$ref": "#/definitions/DNSRecord"
+          },
+          "type": "array"
+        },
+        "registerDHCPLeases": {
+          "description": "RegisterDHCPLeases publishes DHCP hostnames as <name>.<localDomain> (default true).",
+          "type": "boolean"
+        },
+        "upstreams": {
+          "description": "Upstreams are the resolvers queries are forwarded to (default: Talos' resolver, 127.0.0.53).",
+          "items": {
+            "anyOf": [
+              {
+                "format": "ipv4"
+              },
+              {
+                "format": "ipv6"
+              }
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "listenLinks"
+      ],
+      "type": "object"
+    },
+    "DelegatedSubnet": {
+      "additionalProperties": false,
+      "description": "DelegatedSubnet is a /64 of the delegated prefix given to a link.",
+      "properties": {
+        "id": {
+          "description": "ID is the /64 index in the delegated prefix (a /56 has 256 of them, 0-255; default 0).",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "link": {
+          "description": "Link that gets the /64.",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "link"
+      ],
+      "type": "object"
+    },
+    "DynamicDNSConfig": {
+      "additionalProperties": false,
+      "description": "DynamicDNS keeps a public DNS name pointing at the router's WAN address (kind: DynamicDNSConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "hostnames": {
+          "description": "Hostnames to keep up to date.",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "ipv6": {
+          "description": "IPv6 updates the AAAA record instead of the A record.",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "DynamicDNSConfig"
+        },
+        "link": {
+          "description": "Link takes the address from this link (default: ask the provider what it sees; needed behind another NAT).",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        "name": {
+          "description": "Name of the document.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "passwordFile": {
+          "description": "relative to router.yaml; the API token for most providers",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "path": {
+          "description": "custom: e.g. /nic/update?hostname=%h&myip=%i",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "period": {
+          "description": "Period between checks (default 5m).",
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "type": "string"
+        },
+        "provider": {
+          "description": "Provider is an inadyn provider (cloudflare.com, duckdns.org, default@dyndns.org, ...) or \"custom\" for any dyndns2-style server (server and path).",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "server": {
+          "description": "custom: host[:port]",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "ssl": {
+          "description": "SSL (default true) talks HTTPS to the provider.",
+          "type": "boolean"
+        },
+        "username": {
+          "description": "Username of the account (Cloudflare: the zone).",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "provider",
+        "hostnames"
+      ],
+      "type": "object"
+    },
+    "FirewallAddressGroupConfig": {
+      "additionalProperties": false,
+      "description": "AddressGroup is a named set of subnets, IPv4 and/or IPv6 (kind: FirewallAddressGroupConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "kind": {
+          "const": "FirewallAddressGroupConfig"
+        },
+        "name": {
+          "description": "Name of the group: letters, digits and _ (it becomes an nftables set name).",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "subnets": {
+          "description": "Subnets of the group; IPv4 and IPv6 can be mixed.",
+          "items": {
+            "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "subnets"
+      ],
+      "type": "object"
+    },
+    "FirewallConfig": {
+      "additionalProperties": false,
+      "description": "Firewall holds global settings of the forward firewall (kind: FirewallConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "forwardDefault": {
+          "description": "ForwardDefault applies to forwarded traffic no rule matched (default: block).",
+          "enum": [
+            "accept",
+            "block"
+          ]
+        },
+        "kind": {
+          "const": "FirewallConfig"
+        },
+        "logBlocked": {
+          "description": "LogBlocked logs packets dropped by the default policy.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "FirewallPortGroupConfig": {
+      "additionalProperties": false,
+      "description": "PortGroup is a named set of ports (kind: FirewallPortGroupConfig); the rule sets the protocol.",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "kind": {
+          "const": "FirewallPortGroupConfig"
+        },
+        "name": {
+          "description": "Name of the group: letters, digits and _ (it becomes an nftables set name).",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "ports": {
+          "description": "Ports of the group: 443, \"443\" or \"8000-9000\".",
+          "items": {
+            "anyOf": [
+              {
+                "maximum": 65535,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "pattern": "^\\s*[0-9]+\\s*(-\\s*[0-9]+\\s*)?$",
+                "type": "string"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "ports"
+      ],
+      "type": "object"
+    },
+    "FirewallRuleConfig": {
+      "additionalProperties": false,
+      "description": "FirewallRule matches traffic from one zone to another; `to: self` is traffic to the router (kind: FirewallRuleConfig).",
+      "properties": {
+        "action": {
+          "description": "Action is accept (default) or block. Rules are evaluated in order; replies are always allowed.",
+          "enum": [
+            "accept",
+            "block"
+          ]
+        },
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "destinationGroups": {
+          "description": "DestinationGroups are FirewallAddressGroupConfig names; not with destinationSubnets.",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "destinationSubnets": {
+          "description": "DestinationSubnets limits the rule to these destinations (for a port forward: the target, after DNAT).",
+          "items": {
+            "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "from": {
+          "description": "From is the zone the traffic comes from.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "kind": {
+          "const": "FirewallRuleConfig"
+        },
+        "log": {
+          "description": "Log logs the packets the rule matches (kernel log, prefix \"routal <name>:\").",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Name of the rule; it shows in the ruleset and in logs.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "portGroups": {
+          "description": "PortGroups are FirewallPortGroupConfig names; not with ports.",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "ports": {
+          "description": "Ports are destination ports (tcp and udp only): 443, \"443\" or \"8000-9000\".",
+          "items": {
+            "anyOf": [
+              {
+                "maximum": 65535,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "pattern": "^\\s*[0-9]+\\s*(-\\s*[0-9]+\\s*)?$",
+                "type": "string"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "protocol": {
+          "description": "Protocol is tcp, udp, icmp or icmpv6 (default: any).",
+          "enum": [
+            "tcp",
+            "udp",
+            "icmp",
+            "icmpv6"
+          ]
+        },
+        "sourceGroups": {
+          "description": "SourceGroups, DestinationGroups and PortGroups reference FirewallAddressGroupConfig and FirewallPortGroupConfig documents; they replace the literal lists in the same direction.",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "sourceSubnets": {
+          "description": "SourceSubnets limits the rule to these sources.",
+          "items": {
+            "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "to": {
+          "description": "To is the zone the traffic goes to, or \"self\" for the router itself (then protocol and ports are required).",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "FirewallZoneConfig": {
+      "additionalProperties": false,
+      "description": "FirewallZone groups links (kind: FirewallZoneConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "kind": {
+          "const": "FirewallZoneConfig"
+        },
+        "links": {
+          "description": "Links of the zone (kernel names or Talos aliases); a link is in one zone at most.",
+          "items": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+            "type": [
+              "string",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Name of the zone, used by rules (from, to); \"self\" is reserved.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "links"
+      ],
+      "type": "object"
+    },
+    "ForwardingConfig": {
+      "additionalProperties": false,
+      "description": "Forwarding enables IP forwarding between interfaces (kind: ForwardingConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "ipv4": {
+          "description": "IPv4 forwards IPv4 between links (default true).",
+          "type": "boolean"
+        },
+        "ipv6": {
+          "description": "IPv6 forwards IPv6 between links (default true).",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "ForwardingConfig"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "MDNSReflectorConfig": {
+      "additionalProperties": false,
+      "description": "MDNSReflector repeats mDNS (Bonjour/Avahi) between links, so that services such as printers, AirPlay or Chromecast are found across VLANs (kind: MDNSReflectorConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "kind": {
+          "const": "MDNSReflectorConfig"
+        },
+        "links": {
+          "description": "Links mDNS is repeated between: at least two. The firewall must allow udp 5353 from their zones.",
+          "items": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+            "type": [
+              "string",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "links"
+      ],
+      "type": "object"
+    },
+    "MasqueradeConfig": {
+      "additionalProperties": false,
+      "description": "Masquerade source-NATs traffic leaving a link (kind: MasqueradeConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "kind": {
+          "const": "MasqueradeConfig"
+        },
+        "name": {
+          "description": "Name of the NAT rule.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "outLink": {
+          "description": "OutLink is the link the traffic leaves through (the WAN link).",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        "snatAddress": {
+          "anyOf": [
+            {
+              "format": "ipv4"
+            },
+            {
+              "format": "ipv6"
+            }
+          ],
+          "description": "SNATAddress uses a fixed source address instead of the link address.",
+          "type": "string"
+        },
+        "sourceSubnets": {
+          "description": "SourceSubnets limits NAT to these sources (default: everything leaving the link).",
+          "items": {
+            "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "outLink"
+      ],
+      "type": "object"
+    },
+    "NTPServerConfig": {
+      "additionalProperties": false,
+      "description": "NTPServer serves time to local networks (kind: NTPServerConfig). It does not set the router's clock (Talos does); it serves the time it tracks from its upstreams.",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "kind": {
+          "const": "NTPServerConfig"
+        },
+        "listenLinks": {
+          "description": "ListenLinks are the links the server answers on; DHCP there advertises the router as NTP server.",
+          "items": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+            "type": [
+              "string",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "upstreams": {
+          "description": "Upstreams are the time sources, names or addresses (default: time.cloudflare.com).",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "listenLinks"
+      ],
+      "type": "object"
+    },
+    "PPPoEConfig": {
+      "additionalProperties": false,
+      "description": "PPPoE dials the ISP over Ethernet with pppd (kind: PPPoEConfig). The interface it creates (default ppp0) is used like any link: zones, masquerade, prefix delegation.",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "defaultRoute": {
+          "description": "DefaultRoute (default true) routes the Internet through the session.",
+          "type": "boolean"
+        },
+        "interface": {
+          "description": "Interface is the name of the PPP interface (default ppp0): use it in zones, NAT and prefix delegation.",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        "ipv6": {
+          "description": "IPv6 (default true) negotiates IPv6 on the session (then PrefixDelegationConfig can run on it).",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "PPPoEConfig"
+        },
+        "link": {
+          "description": "Ethernet link (a VLAN if the ISP wants one, e.g. wan0.832)",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        "mtu": {
+          "description": "MTU of the session (default 1492); TCP MSS is clamped to it.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Name of the session.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "passwordFile": {
+          "description": "relative to router.yaml",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "serviceName": {
+          "description": "ServiceName, only if the ISP asks for one.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "username": {
+          "description": "Username of the ISP account.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "link",
+        "username",
+        "passwordFile"
+      ],
+      "type": "object"
+    },
+    "PortForwardConfig": {
+      "additionalProperties": false,
+      "description": "PortForward destination-NATs traffic arriving on a link (kind: PortForwardConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "inLink": {
+          "description": "InLink is the link the traffic arrives on (the WAN link).",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        "kind": {
+          "const": "PortForwardConfig"
+        },
+        "name": {
+          "description": "Name of the port forward.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "ports": {
+          "description": "Ports on the router: one port, a range, or several.",
+          "items": {
+            "anyOf": [
+              {
+                "maximum": 65535,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "pattern": "^\\s*[0-9]+\\s*(-\\s*[0-9]+\\s*)?$",
+                "type": "string"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "protocol": {
+          "description": "Protocol is tcp or udp.",
+          "enum": [
+            "tcp",
+            "udp"
+          ]
+        },
+        "reflection": {
+          "description": "Reflection (default true) makes the forward work from inside too, when clients use the router's public address (\"NAT loopback\" / hairpin NAT).",
+          "type": "boolean"
+        },
+        "sourceSubnets": {
+          "description": "SourceSubnets limits who may use the forward (default: anyone).",
+          "items": {
+            "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "toAddress": {
+          "anyOf": [
+            {
+              "format": "ipv4"
+            },
+            {
+              "format": "ipv6"
+            }
+          ],
+          "description": "ToAddress is the host the traffic is sent to. A FirewallRuleConfig must also allow it.",
+          "type": "string"
+        },
+        "toPort": {
+          "description": "ToPort is the port on the target, with a single port only (default: the same port).",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "inLink",
+        "protocol",
+        "ports",
+        "toAddress"
+      ],
+      "type": "object"
+    },
+    "PrefixDelegationConfig": {
+      "additionalProperties": false,
+      "description": "PrefixDelegation asks the ISP for an IPv6 prefix with DHCPv6 (IA_PD) on a WAN link and gives a /64 of it to each LAN link (kind: PrefixDelegationConfig). RouterAdvertisementConfig without prefixes then announces it.",
+      "properties": {
+        "acceptRA": {
+          "description": "AcceptRA (default true) keeps accepting router advertisements on the WAN link although forwarding is on (the ISP's default route usually comes from them).",
+          "type": "boolean"
+        },
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "kind": {
+          "const": "PrefixDelegationConfig"
+        },
+        "link": {
+          "description": "Link is the WAN link the DHCPv6 client runs on (an Ethernet link, or the PPPoE interface).",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        "name": {
+          "description": "Name of the document.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "prefixLength": {
+          "description": "PrefixLength is a hint for the size wanted (e.g. 56); the ISP decides.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subnets": {
+          "description": "Subnets gives /64s of the delegated prefix to links; the router takes ::1 on each.",
+          "items": {
+            "$ref": "#/definitions/DelegatedSubnet"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "link",
+        "subnets"
+      ],
+      "type": "object"
+    },
+    "RouterAdvertisementConfig": {
+      "additionalProperties": false,
+      "description": "RouterAdvertisement sends IPv6 router advertisements on a link (kind: RouterAdvertisementConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "dnsServers": {
+          "description": "DNSServers announced (default: the router when DNSServerConfig listens on the link).",
+          "items": {
+            "anyOf": [
+              {
+                "format": "ipv4"
+              },
+              {
+                "format": "ipv6"
+              }
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "const": "RouterAdvertisementConfig"
+        },
+        "link": {
+          "description": "Link the advertisements are sent on.",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        "managed": {
+          "description": "Managed is stateful DHCPv6: not supported yet.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Name of the document.",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "other": {
+          "description": "Other also serves DNS options with stateless DHCPv6; needs prefixes.",
+          "type": "boolean"
+        },
+        "prefixes": {
+          "description": "Prefixes announced (default: every /64 on the link, which follows a delegated prefix).",
+          "items": {
+            "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "routerLifetime": {
+          "description": "RouterLifetime of the default route on clients (default 30m).",
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "link"
+      ],
+      "type": "object"
+    },
+    "UPnPConfig": {
+      "additionalProperties": false,
+      "description": "UPnP lets devices on the internal links open port forwards themselves, with UPnP IGD, NAT-PMP and PCP (kind: UPnPConfig).",
+      "properties": {
+        "apiVersion": {
+          "const": "v1alpha1"
+        },
+        "externalLink": {
+          "description": "ExternalLink is the WAN link the forwards are opened on.",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        "externalPorts": {
+          "description": "ExternalPorts limits the ports devices may open (default 1024-49151, which keeps the Talos API on 50000 out of reach).",
+          "items": {
+            "anyOf": [
+              {
+                "maximum": 65535,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "pattern": "^\\s*[0-9]+\\s*(-\\s*[0-9]+\\s*)?$",
+                "type": "string"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "internalLinks": {
+          "description": "InternalLinks are the links devices may ask from.",
+          "items": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$",
+            "type": [
+              "string",
+              "boolean"
+            ]
+          },
+          "type": "array"
+        },
+        "internalSubnets": {
+          "description": "InternalSubnets limits the devices allowed to ask (default: any address on the internal links).",
+          "items": {
+            "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "const": "UPnPConfig"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "externalLink",
+        "internalLinks"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "One document of router.yaml. Generated from pkg/config by make schema; do not edit.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/ForwardingConfig"
+    },
+    {
+      "$ref": "#/definitions/FirewallConfig"
+    },
+    {
+      "$ref": "#/definitions/FirewallZoneConfig"
+    },
+    {
+      "$ref": "#/definitions/FirewallRuleConfig"
+    },
+    {
+      "$ref": "#/definitions/FirewallAddressGroupConfig"
+    },
+    {
+      "$ref": "#/definitions/FirewallPortGroupConfig"
+    },
+    {
+      "$ref": "#/definitions/MasqueradeConfig"
+    },
+    {
+      "$ref": "#/definitions/PortForwardConfig"
+    },
+    {
+      "$ref": "#/definitions/DHCPServerConfig"
+    },
+    {
+      "$ref": "#/definitions/DNSServerConfig"
+    },
+    {
+      "$ref": "#/definitions/RouterAdvertisementConfig"
+    },
+    {
+      "$ref": "#/definitions/NTPServerConfig"
+    },
+    {
+      "$ref": "#/definitions/MDNSReflectorConfig"
+    },
+    {
+      "$ref": "#/definitions/UPnPConfig"
+    },
+    {
+      "$ref": "#/definitions/PrefixDelegationConfig"
+    },
+    {
+      "$ref": "#/definitions/PPPoEConfig"
+    },
+    {
+      "$ref": "#/definitions/DynamicDNSConfig"
+    }
+  ],
+  "title": "Routal router.yaml"
+}

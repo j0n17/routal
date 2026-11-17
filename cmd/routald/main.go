@@ -6,6 +6,7 @@
 //	routald render-services <router.yaml> <dir>       write the daemon configs (Kea, Unbound, radvd...) to dir
 //	routald talos-patch [-current mc.yaml] <router.yaml>  print the Talos machine config patch
 //	routald addr [-6] <link>                          print the link's public address (dynamic DNS)
+//	routald schema                                    print the JSON schema of router.yaml (for editors)
 //	routald talos-render <talos.yaml>                 print talos.yaml with privateKeyFile & co. resolved
 package main
 
@@ -21,6 +22,7 @@ import (
 	"github.com/j0n17/routal/pkg/config"
 	"github.com/j0n17/routal/pkg/env"
 	"github.com/j0n17/routal/pkg/nft"
+	"github.com/j0n17/routal/pkg/schema"
 	"github.com/j0n17/routal/pkg/services"
 	"github.com/j0n17/routal/pkg/talospatch"
 	"github.com/j0n17/routal/pkg/talosrender"
@@ -34,7 +36,7 @@ func main() {
 }
 
 func usage() error {
-	return fmt.Errorf("usage: routald run|validate|render|render-services|talos-patch|talos-render|addr [args]")
+	return fmt.Errorf("usage: routald run|validate|render|render-services|talos-patch|talos-render|schema|addr [args]")
 }
 
 func run(args []string) error {
@@ -105,6 +107,16 @@ func run(args []string) error {
 		}
 
 		_, err = os.Stdout.Write(out)
+
+		return err
+	}
+
+	if cmd == "schema" {
+		if len(args) != 0 {
+			return usage()
+		}
+
+		_, err := os.Stdout.Write(schema.JSON)
 
 		return err
 	}

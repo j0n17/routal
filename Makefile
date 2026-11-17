@@ -1,4 +1,5 @@
 VERSION       ?= 0.1.0
+FUZZTIME      ?= 1m
 TALOS_VERSION ?= v1.15.0-beta.0
 ARCH          ?= arm64
 GO_IMAGE      ?= golang:1.26
@@ -6,7 +7,7 @@ OUT           ?= _out
 
 GO = docker run --rm -v "$(CURDIR)":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src $(GO_IMAGE)
 
-.PHONY: test check cover integration clab extension installer push-installer image clean
+.PHONY: test check cover schema fuzz integration clab extension installer push-installer image clean
 
 test: ## run unit tests (in Docker)
 	$(GO) sh -c 'test -z "$$(gofmt -l .)" && go vet ./... && go test ./...'
@@ -15,6 +16,16 @@ check: test ## also check every example with the real tools: nftables ruleset, d
 	docker build --platform linux/$(ARCH) --target daemons -t routal-daemons:$(ARCH) .
 	docker run --rm --platform linux/$(ARCH) --cap-add NET_ADMIN -v "$(CURDIR)":/src:ro routal-daemons:$(ARCH) /src/hack/check-configs.sh
 	hack/check-talos.sh $(TALOS_VERSION) $(OUT)/talos-check
+
+schema: ## regenerate pkg/schema/router.schema.json from the types and comments of pkg/config
+	$(GO) go test ./pkg/schema -run TestUpToDate -update
+
+fuzz: ## fuzz the parsers and the config for FUZZTIME each; nft, Unbound, radvd and chrony check what accepted configs render
+	docker build --platform linux/$(ARCH) --target daemons -t routal-daemons:$(ARCH) .
+	mkdir -p $(OUT)/fuzz
+	$(GO) sh -c 'for p in pkg/blocklist pkg/pd pkg/leases test/variants; do \
+		CGO_ENABLED=0 GOARCH=$(ARCH) go test -c -fuzz=Fuzz -o $(OUT)/fuzz/$$(basename $$p).test ./$$p || exit 1; done'
+	docker run --rm --platform linux/$(ARCH) --cap-add NET_ADMIN -v "$(CURDIR)":/src routal-daemons:$(ARCH) /src/hack/fuzz.sh $(FUZZTIME) /src/$(OUT)/fuzz
 
 integration: ## data-plane tests in network namespaces (router, LAN, NAS VLAN, WAN, VPN peer)
 	docker build --platform linux/$(ARCH) --target integration -t routal-integration:$(ARCH) .

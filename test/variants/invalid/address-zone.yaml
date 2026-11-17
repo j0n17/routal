@@ -1,0 +1,8 @@
+# error: PortForwards[0] toAddress: empty or zoned address
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: web
+inLink: wan0
+protocol: tcp
+ports: [443]
+toAddress: "fe80::10%lan0"

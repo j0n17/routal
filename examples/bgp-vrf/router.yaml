@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../pkg/schema/router.schema.json
 # Firewall and services for the BGP + VRF router (talos.yaml next to this file).
 # Links in a VRF are used like any other link.
 apiVersion: v1alpha1

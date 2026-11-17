@@ -1,0 +1,5 @@
+# error: DNSServer upstreams[0]: empty or zoned address
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+upstreams: ['', 9.9.9.9]

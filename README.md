@@ -39,6 +39,22 @@ my-router/
 
 All examples are checked by `make check` (routald, the real daemons, and `talosctl validate`).
 
+### Editor support
+
+`router.yaml` has a JSON schema, generated from routald's types: with the
+[YAML language server](https://github.com/redhat-developer/yaml-language-server) (VS Code's YAML
+extension, Neovim, Helix, JetBrains...) the editor completes kinds and fields, shows their
+documentation and underlines mistakes while you type. Put this on the first line of router.yaml:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/j0n17/routal/main/pkg/schema/router.schema.json
+```
+
+or keep the schema of your routald version next to the file (`routald schema > router.schema.json`,
+then `$schema=./router.schema.json`). The schema sees one document at a time: types, unknown
+fields, allowed values, link names, addresses, ports. What needs the whole file (a rule naming a
+zone that does not exist, a DHCP range outside its subnet, a missing secret) is `routald validate`'s.
+
 ### Secrets
 
 Talos wants WireGuard keys inline. In `talos.yaml`, reference a file instead (path relative to
@@ -105,7 +121,7 @@ Every field is in [`examples/reference/router.yaml`](examples/reference/router.y
 | `PrefixDelegationConfig` | IPv6 prefix from the ISP (DHCPv6 IA_PD), a /64 per LAN link, followed by router advertisements | routald |
 | `DynamicDNSConfig` | keep a public name on the WAN address (Cloudflare, DuckDNS, dyndns2...) | inadyn |
 
-Links are kernel names or Talos `LinkAliasConfig` aliases. routald programs its own `inet routal`
+Links are kernel names or Talos `LinkAliasConfig` aliases (a letter first, at most 15 characters). routald programs its own `inet routal`
 nftables table; Talos keeps `inet talos`. Unknown fields are errors.
 
 ### BGP and VRFs
@@ -147,6 +163,8 @@ make test          # unit tests, gofmt, go vet, config variants (valid and inval
 make check         # + every example and variant checked by the real tools: nft -c, kea -t,
                    #   unbound-checkconf, radvd -c, chronyd -p, inadyn --check-config, talosctl validate
 make cover         # coverage of the unit tests and of an instrumented routald in make integration
+make schema        # regenerate the JSON schema of router.yaml after changing pkg/config (make test fails when it is stale)
+make fuzz          # fuzz the parsers and the config (FUZZTIME=1m per target); the real tools check what is rendered
 make integration   # data plane in network namespaces: router, LAN clients, NAS VLAN, WAN host, VPN peer
 make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
 ```

@@ -6,21 +6,86 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var (
 	nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
-	linkRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@-]{0,31}$`)
+	// a kernel interface name, or a Talos alias held to the same 15 characters: until an alias
+	// resolves its name goes as is into nftables and the daemons, which refuse longer names
+	// (it starts with a letter: radvd reads "0" or "1a" as a number)
+	linkRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._@-]{0,14}$`)
 	// group names become nftables set names
 	groupRe       = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,30}$`)
 	serviceNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 	hostRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,62})(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,62}))*$`)
 )
+
+// LinkPattern is the regular expression of link names, for the JSON schema.
+func LinkPattern() string { return linkRe.String() }
+
+// isHost reports whether s is a host or domain name. Its last label has a letter: "0" or "10.1"
+// is a number or a truncated address, and radvd, for one, reads it as such.
+func isHost(s string) bool {
+	last := s[strings.LastIndexByte(s, '.')+1:]
+
+	return hostRe.MatchString(s) && strings.ContainsFunc(last, unicode.IsLetter)
+}
+
+// badAddresses lists the addresses and prefixes that are not usable in a generated config: an
+// empty entry in a list (YAML "" or null decodes to the zero address without an error) and an
+// address with a zone ("fe80::1%eth0"), which means nothing in a rule or on another host.
+func badAddresses(v reflect.Value, path string, inList bool) []string {
+	switch e := v.Interface().(type) {
+	case netip.Addr:
+		if (inList && !e.IsValid()) || e.Zone() != "" {
+			return []string{path}
+		}
+
+		return nil
+	case netip.Prefix:
+		if inList && !e.IsValid() {
+			return []string{path}
+		}
+
+		return nil
+	}
+
+	var out []string
+
+	switch v.Kind() {
+	case reflect.Pointer:
+		if !v.IsNil() {
+			return badAddresses(v.Elem(), path, inList)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			f := v.Type().Field(i)
+			if !f.IsExported() {
+				continue
+			}
+
+			name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+			if name == "" {
+				name = f.Name
+			}
+
+			out = append(out, badAddresses(v.Field(i), strings.TrimSpace(path+" "+name), false)...)
+		}
+	case reflect.Slice:
+		for i := range v.Len() {
+			out = append(out, badAddresses(v.Index(i), fmt.Sprintf("%s[%d]", path, i), true)...)
+		}
+	}
+
+	return out
+}
 
 // Validate checks every document and the references between them.
 //
@@ -29,6 +94,10 @@ func (cfg *Config) Validate() error {
 	var errs []error
 
 	fail := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+
+	for _, where := range badAddresses(reflect.ValueOf(cfg).Elem(), "", false) {
+		fail("%s: empty or zoned address", where)
+	}
 
 	names := map[string]map[string]bool{}
 	checkName := func(kind, name string) {
@@ -50,7 +119,7 @@ func (cfg *Config) Validate() error {
 	}
 	checkLink := func(where, link string) {
 		if !linkRe.MatchString(link) {
-			fail("%s: invalid link name %q", where, link)
+			fail("%s: invalid link name %q (a kernel name or a Talos alias: a letter first, at most 15 characters)", where, link)
 		}
 	}
 
@@ -232,7 +301,7 @@ func (cfg *Config) Validate() error {
 			fail("%s: leaseTime must be at least 1m", where)
 		}
 
-		if d.Domain != "" && !hostRe.MatchString(d.Domain) {
+		if d.Domain != "" && !isHost(d.Domain) {
 			fail("%s: invalid domain %q", where, d.Domain)
 		}
 
@@ -266,7 +335,7 @@ func (cfg *Config) Validate() error {
 				fail("%s: static lease %s: %s is outside subnet %s", where, l.MAC, l.Address, d.Subnet)
 			}
 
-			if l.Hostname != "" && !hostRe.MatchString(l.Hostname) {
+			if l.Hostname != "" && !isHost(l.Hostname) {
 				fail("%s: static lease %s: invalid hostname %q", where, l.MAC, l.Hostname)
 			}
 		}
@@ -282,7 +351,7 @@ func (cfg *Config) Validate() error {
 		}
 
 		for _, u := range n.Upstreams {
-			if !hostRe.MatchString(u) {
+			if _, err := netip.ParseAddr(u); err != nil && !isHost(u) {
 				fail("NTPServerConfig: invalid upstream %q", u)
 			}
 		}
@@ -331,7 +400,7 @@ func (cfg *Config) Validate() error {
 			checkLink("DNSServerConfig", l)
 		}
 
-		if d.LocalDomain != "" && !hostRe.MatchString(d.LocalDomain) {
+		if d.LocalDomain != "" && !isHost(d.LocalDomain) {
 			fail("DNSServerConfig: invalid localDomain %q", d.LocalDomain)
 		}
 
@@ -343,7 +412,7 @@ func (cfg *Config) Validate() error {
 			}
 
 			for _, n := range append(slices.Clone(b.Domains), b.Allow...) {
-				if !hostRe.MatchString(n) || !strings.Contains(n, ".") {
+				if !isHost(n) || !strings.Contains(n, ".") {
 					fail("DNSServerConfig blocking: invalid domain %q", n)
 				}
 			}
@@ -362,7 +431,7 @@ func (cfg *Config) Validate() error {
 		}
 
 		for _, r := range d.LocalRecords {
-			if !hostRe.MatchString(r.Name) || len(r.Addresses) == 0 {
+			if !isHost(r.Name) || len(r.Addresses) == 0 {
 				fail("DNSServerConfig: local record %q needs a valid name and addresses", r.Name)
 			}
 		}
@@ -522,7 +591,7 @@ func (cfg *Config) validateWAN(checkName func(kind, name string), checkLink func
 		}
 
 		for _, h := range d.Hostnames {
-			if !hostRe.MatchString(h) {
+			if !isHost(h) {
 				fail("%s: invalid hostname %q", where, h)
 			}
 		}

@@ -235,12 +235,70 @@ an allowed name inside a blocked zone becomes a transparent zone.
 | cmd/routald | 91.0% |
 | pkg/env | 90.0% |
 
-Every validation error has an invalid variant (test/variants/invalid, 84 files). What is left:
+Every validation error has an invalid variant (test/variants/invalid, 90 files). What is left:
 - the netlink side of the VRF support (the lab's kernel has no VRF; its logic is unit-tested
   against a fake kernel, the real thing was checked on a Talos VM);
 - DHCPv6 client paths the lab's ISP does not produce: a refused renewal (Kea hands out a new prefix
   instead), a lease that expires, a WAN link that disappears, kernel errors when adding addresses;
 - errors that cannot happen (YAML encoders writing to memory) or need a broken file system.
+
+## Fuzzing (2026-11-17)
+`make fuzz` runs five Go fuzz targets in the daemons image:
+
+| Target | Input | What must hold |
+|---|---|---|
+| blocklist `FuzzParse` | a downloaded list | every name is normalized and cannot break out of an Unbound line |
+| pd `FuzzParse` | a DHCPv6 answer from the ISP | an accepted lease has a usable prefix, T1 ≥ 30 s, T2 ≥ T1, and its Renew parses |
+| leases `FuzzKea` | Kea's lease file | reading ends; hostnames are plain DNS labels |
+| variants `FuzzConfig` | the bytes of router.yaml | loading never panics |
+| variants `FuzzField` | one value replaced in a valid config | see below |
+
+For a config that validation accepts, both config targets check it against the JSON schema, render
+everything twice (same output), parse the Kea configs as JSON, generate the Talos patch, and hand
+the ruleset to `nft -c` and the daemon configs to `unbound-checkconf`, `radvd -c` and `chronyd -p`. A config that is accepted and
+that a tool refuses is a hole in validation. `FuzzField` is the one that finds them: random bytes
+rarely get past the YAML parser, so it keeps the document valid and replaces one value.
+
+Found and fixed, each with an invalid variant or a unit test:
+- a link name of more than 15 characters, or starting with a digit: nft and radvd refuse it. Links
+  and aliases are now a letter first, at most 15 characters;
+- `""` in a list of addresses decodes to the zero address without an error (`forward-addr: invalid IP`
+  in unbound.conf): rejected in every address and prefix list;
+- an address with a zone (`fe80::1%eth0`) in a port forward: rejected everywhere;
+- a domain whose last label is a number (`localDomain: 0`): radvd reads it as a number. Host and
+  domain names now need a letter in their last label;
+- a null entry in a list (`ports: [~]`, or a lone `-`) decodes to nothing: the rule had no ports and
+  matched them all. Found by comparing with the JSON schema; any null list entry is now an error;
+- a value made of line breaks only came back empty from the strict decoder (it re-encodes each
+  document), and an empty value is a default: such values are now re-encoded in quotes.
+
+After these, `FuzzField` ran 8 minutes (230,000 configs) without a finding. Failing inputs are not
+kept in testdata (they name a seed by its index); each finding is an invalid variant instead.
+
+Not covered: Kea and inadyn check their config against the system (interfaces, network), too slow
+and too stateful for a fuzz loop, so their configs are only checked as JSON or not at all; make
+check runs them on the examples and variants. The progress lines of `go test -fuzz` show 0 execs/s
+for long stretches on the config targets: the workers only report when they return.
+
+## JSON schema of router.yaml (2026-11-17)
+`pkg/schema/router.schema.json` (draft-07) is for editors: completion, documentation on hover and
+errors while typing, through yaml-language-server. `routald schema` prints it; the examples point
+at it on their first line.
+
+- It is generated, by `make schema`, from the types of pkg/config (reflection) and their comments
+  (go/parser): the comment of a field is what the editor shows. Tags add what the type does not
+  say: `schema:"link"` (the link name pattern of validation) and `schema:"enum=a|b"`.
+- `make test` fails when the committed file is not what the types generate, when the schema and
+  the loader do not know the same kinds, or when an example or valid variant does not match.
+- routald's validation stays the authority. The schema alone refuses 24 of the 90 invalid
+  variants: it cannot see references between documents, values that must agree, or files.
+- It is never stricter than routald, and the fuzzer holds it to that: every config routald accepts
+  must match the schema. That is why a string also takes a number or a boolean (`username: 12345`
+  needs no quotes for routald). Known exceptions, where the YAML decoder is lax and the schema is
+  not: YAML 1.1 booleans (`yes`, `on`, `y`...) where the schema wants `true` or `false`, a float
+  for an integer (`mtu: 1492.5` is truncated), and `""` for an optional value.
+- Not tested in an editor: the schema is checked with a Go validator (santhosh-tekuri/jsonschema,
+  a test-only dependency), not with yaml-language-server itself.
 
 ## Talos kernel (v1.15.0-beta.0), checked on the VM
 | Feature | Kernel | Consequence |
