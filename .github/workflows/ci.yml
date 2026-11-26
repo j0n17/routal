@@ -49,6 +49,13 @@ jobs:
             sudo apt-get install -y -q "linux-modules-extra-$(uname -r)"
             sudo modprobe -a $mods
           }
+      # AppArmor profiles of the runner match by path, inside containers too: the host's chronyd
+      # profile would keep the lab's chronyd from reading its config under /var/lib/routal
+      - name: Host AppArmor profiles of the lab's daemons
+        run: |
+          for p in /etc/apparmor.d/usr.sbin.chronyd /etc/apparmor.d/usr.sbin.unbound /etc/apparmor.d/usr.sbin.kea-dhcp* /etc/apparmor.d/usr.sbin.avahi-daemon; do
+            if [ -f "$p" ]; then sudo apparmor_parser -R "$p" || true; fi
+          done
       - run: make integration 2>&1 | tee ci.log
       - name: Failure summary
         if: failure()

@@ -6,7 +6,7 @@ set -eu
 version=$1 out=$2
 mkdir -p "$out"
 docker run --rm -v "$PWD":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src golang:1.26 sh -c "
-	go build -o /tmp/routald ./cmd/routald &&
+	go build -buildvcs=false -o /tmp/routald ./cmd/routald &&
 	for f in examples/*/talos.yaml; do /tmp/routald talos-render \$f > $out/\$(basename \$(dirname \$f)).src.yaml || exit 1; done"
 talosctl() { docker run --rm -v "$PWD/$out":/out "ghcr.io/siderolabs/talosctl:$version" "$@"; }
 talosctl gen config routal https://192.0.2.1:6443 --skip-k8s-etcd --output-types controlplane -o /out/base.yaml --force >/dev/null
