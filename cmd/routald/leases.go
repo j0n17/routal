@@ -19,6 +19,11 @@ type leaseNames struct {
 	pushed map[string]services.Record // by name
 }
 
+// reservedNames are names other devices look up on their own and trust: a DHCP client that calls
+// itself wpad would become the proxy of every browser with proxy auto-discovery on (and isatap an
+// IPv6 tunnel router for old Windows hosts). A static lease or a local record can still use them.
+var reservedNames = map[string]bool{"wpad": true, "isatap": true, "localhost": true}
+
 func (l *leaseNames) sync(cfg *config.Config, unboundGen int) error {
 	dns := cfg.DNSServer
 	if dns == nil || !*dns.RegisterDHCPLeases || dns.LocalDomain == "" || unboundGen == 0 {
@@ -45,7 +50,7 @@ func (l *leaseNames) sync(cfg *config.Config, unboundGen int) error {
 
 	for _, lease := range active {
 		name := services.Qualify(lease.Hostname, dns.LocalDomain)
-		if !taken[name] {
+		if !taken[name] && !reservedNames[lease.Hostname] {
 			want[name] = services.Record{Name: name, Addr: lease.Address}
 		}
 	}

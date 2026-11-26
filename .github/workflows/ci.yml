@@ -1,0 +1,75 @@
+# Everything runs through the Makefile, in Docker, as on a laptop: `make check integration fuzz`.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ARCH: amd64
+
+jobs:
+  check:
+    name: Unit tests, schema, example configs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # gofmt, go vet, unit tests (among them: the committed JSON schema is up to date), then every
+      # example and variant through nft, Kea, Unbound, radvd, chrony, inadyn and talosctl validate
+      - run: make check
+
+  integration:
+    name: Lab (network namespaces)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # the lab needs VLANs, WireGuard and PPP from the runner's kernel
+      - name: Kernel modules
+        run: |
+          mods="8021q wireguard ppp_generic nf_tables nft_chain_nat nft_masq nft_fib_inet"
+          sudo modprobe -a $mods || {
+            sudo apt-get update -q
+            sudo apt-get install -y -q "linux-modules-extra-$(uname -r)"
+            sudo modprobe -a $mods
+          }
+      - run: make integration
+
+  fuzz:
+    name: Fuzzing (30 s per target)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: make fuzz FUZZTIME=30s
+      - name: Keep the inputs that failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings
+          path: |
+            _out/fuzz/*.log
+            **/testdata/fuzz/
+          if-no-files-found: ignore
+
+  extension:
+    name: Extension image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - {arch: amd64, runner: ubuntu-24.04}
+          - {arch: arm64, runner: ubuntu-24.04-arm}
+    steps:
+      - uses: actions/checkout@v4
+      - run: make extension ARCH=${{ matrix.arch }}

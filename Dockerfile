@@ -36,6 +36,8 @@ RUN apk add --no-cache nftables iproute2-minimal kea-dhcp4 kea-dhcp6 unbound rad
         ppp-daemon rp-pppoe inadyn ca-certificates \
     # Avahi only reflects: drop the services it would announce (ssh, sftp)
     && rm -f /etc/avahi/services/*.service \
+    # the packages bring an account for each daemon; miniupnpd is built here
+    && addgroup -S miniupnpd && adduser -S -D -H -h /dev/null -s /sbin/nologin -G miniupnpd miniupnpd \
     # mount points: persistent state, and a tmpfs for pid files and sockets (the rootfs is read-only)
     && mkdir -p /var/lib/routal /run
 COPY --from=miniupnpd /out/ /

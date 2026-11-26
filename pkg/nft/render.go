@@ -36,6 +36,12 @@ var (
 	UPnPInternalTCP = []config.PortRange{{Lo: 5000, Hi: 5000}}
 )
 
+// TalosAPI are the ports of the Talos API (apid, trustd).
+var TalosAPI = []config.PortRange{{Lo: 50000, Hi: 50001}}
+
+// ephemeralPorts is the kernel's default range of source ports (ip_local_port_range).
+const ephemeralPorts = "32768-60999"
+
 // Render returns an nft script that atomically replaces the routal table. Link addresses from e
 // are used for port forward reflection (the router's public address).
 func Render(cfg *config.Config, e env.Env) string {
@@ -98,7 +104,8 @@ func (r renderer) links(names []string) string {
 
 // input narrows the router ports opened in Talos (by `to: self` rules) to the links of the zones
 // that rules allow: each rule accepts its zone's links, then whatever else reaches those ports is
-// dropped. Rules may share ports (e.g. DNS from several zones), so the drops come last.
+// dropped. Rules may share ports (e.g. DNS from several zones), so the drops come last. It also
+// closes the links to the Internet by default and closes the UPnP mapping range.
 func (r renderer) input(b *strings.Builder) {
 	b.WriteString("\tchain input {\n\t\ttype filter hook input priority filter; policy accept;\n")
 
@@ -109,17 +116,30 @@ func (r renderer) input(b *strings.Builder) {
 		accepts strings.Builder
 	)
 
-	accept := func(links []string, proto config.Protocol, pr []config.PortRange, comment string) {
+	// srcs narrows an accept to source addresses (nil: any). Talos matches them too, but this
+	// table must hold on its own.
+	accept := func(links []string, proto config.Protocol, pr []config.PortRange, comment string, srcs []*addrSel) {
 		if len(selfPorts[proto]) == 0 {
 			protos = append(protos, proto)
 		}
 
 		selfPorts[proto] = append(selfPorts[proto], pr...)
 
-		if len(links) > 0 {
-			for _, in := range inputLink {
-				fmt.Fprintf(&accepts, "\t\t%s %s meta l4proto %s th dport %s accept comment %q\n",
-					in, r.links(links), l4proto(proto), ports(mergeRanges(pr)), comment)
+		if len(links) == 0 {
+			return
+		}
+
+		if srcs == nil {
+			srcs = []*addrSel{nil}
+		}
+
+		for _, src := range srcs {
+			for _, fam := range selFamilies(src, nil) {
+				for _, in := range inputLink {
+					m := append([]string{in, r.links(links)}, src.match(fam, "saddr")...)
+					fmt.Fprintf(&accepts, "\t\t%s meta l4proto %s th dport %s accept comment %q\n",
+						strings.Join(m, " "), l4proto(proto), ports(mergeRanges(pr)), comment)
+				}
 			}
 		}
 	}
@@ -130,36 +150,59 @@ func (r renderer) input(b *strings.Builder) {
 			continue
 		}
 
-		accept(r.cfg.ZoneLinks(rule.From), rule.Protocol, rulePorts, rule.Name)
+		accept(r.cfg.ZoneLinks(rule.From), rule.Protocol, rulePorts, rule.Name, r.addrSels(rule.SourceSubnets, rule.SourceGroups))
 	}
 
 	// Forwarded ports are opened in Talos (its filter runs before the DNAT): what reaches the
 	// router itself on them, from another link or family, is dropped unless a rule opens it.
 	for _, pf := range r.cfg.PortForwards {
-		accept(nil, pf.Protocol, pf.Ports, "")
+		accept(nil, pf.Protocol, pf.Ports, "", nil)
 	}
 
 	// UPnP: miniupnpd's ports on the internal links; the external port range is opened in Talos so
 	// that mappings work, and anything that reaches the router itself on it (no mapping) is dropped.
 	if u := r.cfg.UPnP; u != nil {
-		accept(u.InternalLinks, config.ProtocolUDP, UPnPInternalUDP, "upnp")
-		accept(u.InternalLinks, config.ProtocolTCP, UPnPInternalTCP, "upnp")
+		accept(u.InternalLinks, config.ProtocolUDP, UPnPInternalUDP, "upnp", nil)
+		accept(u.InternalLinks, config.ProtocolTCP, UPnPInternalTCP, "upnp", nil)
 	}
 
-	var upnpDrops []string
+	var drops []string
 
-	if u := r.cfg.UPnP; u != nil {
-		// only on the external link: router daemons use ephemeral ports in this range for replies
-		// conntrack cannot match (e.g. unicast answers to the mDNS reflector's multicast queries)
-		for _, p := range []config.Protocol{config.ProtocolTCP, config.ProtocolUDP} {
-			for _, in := range inputLink {
-				upnpDrops = append(upnpDrops, fmt.Sprintf("\t\t%s %q meta l4proto %s th dport %s drop comment \"upnp: no mapping\"\n",
-					in, r.resolve(u.ExternalLink), p, ports(mergeRanges(u.ExternalPorts))))
-			}
+	// Links to the Internet are closed by default, whatever talos.yaml says: Talos' own rules decide
+	// by source address only, and a mistake there must not expose the router (its API on 50000
+	// first). What gets in: answers, what `to: self` rules open from that zone, and what a router
+	// needs from its ISP (ICMP errors, a rate-limited ping, IPv6 neighbor discovery, router
+	// advertisements and MLD, DHCP and DHCPv6 answers).
+	if wan := r.cfg.WANLinks(); len(wan) > 0 {
+		for _, in := range inputLink {
+			m := "\t\t" + in + " " + r.links(wan) + " "
+			accepts.WriteString(m + "icmp type { destination-unreachable, time-exceeded, parameter-problem } accept\n")
+			accepts.WriteString(m + "icmp type echo-request limit rate " + pingRate + " accept\n")
+			accepts.WriteString(m + "icmpv6 type { " + icmpv6Needed + " } accept\n")
+			accepts.WriteString(m + "icmpv6 type echo-request limit rate " + pingRate + " accept\n")
+			accepts.WriteString(m + "udp sport 67 udp dport 68 accept comment \"dhcp client\"\n")
+			accepts.WriteString(m + "ip6 saddr fe80::/10 udp dport 546 accept comment \"dhcpv6 client\"\n")
+			drops = append(drops, m+"drop comment \"wan: closed by default\"\n")
 		}
 	}
 
-	if len(protos) > 0 || len(upnpDrops) > 0 {
+	if u := r.cfg.UPnP; u != nil {
+		// The mapping range is open in Talos for every source: whatever reaches the router itself
+		// there, on any link, has no mapping and no rule. The one exception conntrack cannot match:
+		// unicast answers to the multicast queries the mDNS reflector sends from an ephemeral port.
+		if m := r.cfg.MDNSReflector; m != nil {
+			for _, in := range inputLink {
+				fmt.Fprintf(&accepts, "\t\t%s %s udp sport 5353 udp dport %s accept comment \"mdns answers\"\n", in, r.links(m.Links), ephemeralPorts)
+			}
+		}
+
+		for _, p := range []config.Protocol{config.ProtocolTCP, config.ProtocolUDP} {
+			drops = append(drops, fmt.Sprintf("\t\tmeta l4proto %s th dport %s drop comment \"upnp: no mapping\"\n",
+				p, ports(mergeRanges(u.ExternalPorts))))
+		}
+	}
+
+	if len(protos) > 0 || len(drops) > 0 {
 		// replies to the router's own connections may use any port
 		b.WriteString("\t\tct state established,related accept\n")
 		b.WriteString(accepts.String())
@@ -170,7 +213,7 @@ func (r renderer) input(b *strings.Builder) {
 		fmt.Fprintf(b, "\t\tmeta l4proto %s th dport %s drop\n", l4proto(p), ports(mergeRanges(selfPorts[p])))
 	}
 
-	for _, d := range upnpDrops {
+	for _, d := range drops {
 		b.WriteString(d)
 	}
 
@@ -197,6 +240,14 @@ func mergeRanges(in []config.PortRange) []config.PortRange {
 
 	return out
 }
+
+// pingRate limits the pings a link to the Internet answers.
+const pingRate = "10/second burst 20 packets"
+
+// icmpv6Needed is the ICMPv6 a router cannot work without on its upstream link (RFC 4890).
+const icmpv6Needed = "destination-unreachable, packet-too-big, time-exceeded, parameter-problem, " +
+	"nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert, " +
+	"mld-listener-query, mld-listener-report, mld-listener-done, mld2-listener-report"
 
 // inputLink are the two ways an input link is matched in the input and forward hooks: directly,
 // or as the slave device when the link is in a VRF.

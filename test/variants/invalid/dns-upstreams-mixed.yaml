@@ -1,0 +1,8 @@
+# error: upstreams and tlsUpstreams cannot be mixed
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+upstreams: [9.9.9.9]
+tlsUpstreams:
+  - address: 1.1.1.1
+    name: cloudflare-dns.com

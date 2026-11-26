@@ -3,7 +3,7 @@
 # written to the package's testdata/fuzz/<target>/; the full log of a target is in <bin>/<target>.log.
 set -eu
 fuzztime=$1 bin=$2
-mkdir -p /run/routal /var/lib/routal
+mkdir -p /run/routal/unbound /var/lib/routal/unbound /var/lib/routal/kea /var/lib/routal/chrony
 fail=0
 for t in pkg/blocklist:FuzzParse pkg/pd:FuzzParse pkg/leases:FuzzKea test/variants:FuzzConfig test/variants:FuzzField; do
   pkg=${t%%:*} name=${t##*:}

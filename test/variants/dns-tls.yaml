@@ -1,0 +1,11 @@
+# Variant: DNS over TLS upstreams with DNSSEC validation.
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+dnssec: true
+tlsUpstreams:
+  - address: 9.9.9.9
+    name: dns.quad9.net
+  - address: 2606:4700:4700::1111
+    name: cloudflare-dns.com
+    port: 853

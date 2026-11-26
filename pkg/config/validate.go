@@ -404,6 +404,20 @@ func (cfg *Config) Validate() error {
 			fail("DNSServerConfig: invalid localDomain %q", d.LocalDomain)
 		}
 
+		if len(d.Upstreams) > 0 && len(d.TLSUpstreams) > 0 {
+			fail("DNSServerConfig: upstreams and tlsUpstreams cannot be mixed (queries would also leave unencrypted)")
+		}
+
+		for _, u := range d.TLSUpstreams {
+			if !u.Address.IsValid() {
+				fail("DNSServerConfig tlsUpstreams: an entry has no address")
+			}
+
+			if !isHost(u.Name) {
+				fail("DNSServerConfig tlsUpstreams: %s needs the name on its certificate, got %q", u.Address, u.Name)
+			}
+		}
+
 		if b := d.Blocking; b != nil {
 			for _, u := range b.Lists {
 				if pu, err := url.Parse(u); err != nil || (pu.Scheme != "http" && pu.Scheme != "https") || pu.Host == "" {

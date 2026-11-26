@@ -113,7 +113,7 @@ Every field is in [`examples/reference/router.yaml`](examples/reference/router.y
 | `PortForwardConfig` | destination NAT on an incoming link, reflected for inside clients (`reflection`, default on) | nftables |
 | `UPnPConfig` | devices open their own forwards (UPnP IGD, NAT-PMP, PCP), to their own address only | miniupnpd |
 | `DHCPServerConfig` | DHCPv4 pools, options and static leases (by MAC) | Kea |
-| `DNSServerConfig` | caching DNS, local domain, DHCP client names, static records, blocklists (AdGuard / Pi-hole style) | Unbound |
+| `DNSServerConfig` | caching DNS, local domain, DHCP client names, static records, blocklists (AdGuard / Pi-hole style), DNS over TLS upstreams (`tlsUpstreams`), DNSSEC validation (`dnssec`) | Unbound |
 | `RouterAdvertisementConfig` | IPv6 SLAAC, optionally DHCPv6 options (`other`) | radvd, Kea |
 | `NTPServerConfig` | time for local networks (does not touch the clock, Talos does) | chrony |
 | `MDNSReflectorConfig` | mDNS/Bonjour across links (printers, AirPlay, Chromecast across VLANs) | Avahi |
@@ -123,6 +123,22 @@ Every field is in [`examples/reference/router.yaml`](examples/reference/router.y
 
 Links are kernel names or Talos `LinkAliasConfig` aliases (a letter first, at most 15 characters). routald programs its own `inet routal`
 nftables table; Talos keeps `inet talos`. Unknown fields are errors.
+
+### Hardening
+
+- Every daemon but pppd runs under its own account (`kea`, `unbound`, `radvd`, `chrony`, `avahi`,
+  `miniupnpd`, `inadyn`) with the one or two capabilities it needs (e.g. `CAP_NET_BIND_SERVICE`),
+  and only writes in its own directory. routald itself and pppd stay root.
+- The links to the Internet (masquerade `outLink`, PPPoE sessions, prefix delegation links, the
+  UPnP external link) are closed by default for traffic to the router itself, whatever
+  `talos.yaml` opens: the Talos API (tcp 50000-50001) included. What gets in: answers, ICMP
+  errors, a rate-limited ping, IPv6 neighbor discovery, router advertisements and MLD, DHCP and
+  DHCPv6 answers, and what a `to: self` rule from that zone opens (WireGuard, BGP, or the Talos
+  API with `sourceSubnets`, which this table now matches too).
+- With UPnP, the mapping range is closed on every link for whatever has no mapping.
+- A DHCP client cannot register the names `wpad`, `isatap` or `localhost`.
+- `dnssec: true` makes Unbound refuse forged answers; `tlsUpstreams` encrypts the queries to the
+  upstream resolvers (DNS over TLS; Unbound cannot forward over HTTPS).
 
 ### BGP and VRFs
 
@@ -169,9 +185,12 @@ make integration   # data plane in network namespaces: router, LAN clients, NAS 
 make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
 ```
 
-Both run the real routald and daemons with `examples/nas-vpn` and the same 76 checks
+GitHub Actions (`.github/workflows/ci.yml`) runs `make check`, `make integration`, `make fuzz
+FUZZTIME=30s` and builds the extension for amd64 and arm64 on every push and pull request.
+
+Both run the real routald and daemons with `examples/nas-vpn` and the same 89 checks
 (test/integration/checks.sh): DHCP, SLAAC, DNS, DNS blocking, the firewall in IPv4 and IPv6, NAT,
-reflection, UPnP, NTP, mDNS, options applied on the running router (SNAT to a fixed address, an
+reflection, UPnP, NTP, mDNS, the hardening above (daemon accounts, UPnP range, WAN closed by default), options applied on the running router (SNAT to a fixed address, an
 IPv6 port forward with `toPort`, `forwardDefault: accept`, blocking with 0.0.0.0 answers, DHCPv6
 options, IPv6 forwarding off), then the WAN against a simulated ISP: IPv6 prefix delegation (Kea)
 with renewal, an ISP that is down at start, goes down during the lease and comes back with

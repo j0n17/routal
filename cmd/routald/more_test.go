@@ -405,6 +405,7 @@ blocking:
 	exp := time.Now().Add(time.Hour).Unix()
 	leases := fmt.Sprintf("address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state\n192.168.1.100,aa:bb:cc:dd:ee:01,,3600,%d,1,0,0,phone,0\n", exp)
 	lease := filepath.Join(dirs.State, services.Kea4LeaseFile)
+	_ = os.MkdirAll(filepath.Dir(lease), 0o755)
 	_ = os.WriteFile(lease, []byte(leases), 0o644)
 
 	l := &leaseNames{ctl: "/bin/false", dirs: dirs}
@@ -485,5 +486,89 @@ func TestCLIErrors(t *testing.T) {
 
 	if err := run([]string{"render-services", ex, ro}); err == nil {
 		t.Error("render-services over a directory: no error")
+	}
+}
+
+// A service with an account runs as that account, with only the capabilities it asks for, and
+// reads its config through its group.
+func TestSupervisorDropsRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+
+	base, err := os.MkdirTemp("", "routal")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+
+	_ = os.Chmod(base, 0o755)
+	dirs := services.Dirs{State: filepath.Join(base, "state"), Run: filepath.Join(base, "run")}
+	s := newSupervisor(dirs)
+	out := filepath.Join(dirs.Data("job"), "out")
+
+	svc := services.Service{
+		Name: "job", File: "job.conf", Config: "secret",
+		Command: []string{"/bin/sh", "-c", "{ id -u; grep CapEff /proc/self/status; cat {conf}; } > " + out + "; exec sleep 60"},
+		Test:    []string{"/bin/sh", "-c", "test $(id -u) != 0 && test -r {conf}"},
+		User:    "nobody", Dir: "job", Caps: []uintptr{services.CapNetBindService},
+	}
+
+	if err := s.reconcile([]services.Service{svc}); err != nil {
+		t.Fatal(err)
+	}
+
+	defer s.stopAll()
+
+	var got string
+
+	waitFor(t, "the job's output", func() bool {
+		raw, _ := os.ReadFile(out)
+		got = string(raw)
+
+		return strings.HasSuffix(got, "secret")
+	})
+
+	// uid of nobody, CAP_NET_BIND_SERVICE (bit 10) and nothing else
+	if !strings.HasPrefix(got, "65534\n") || !strings.Contains(got, "CapEff:\t0000000000000400\n") {
+		t.Errorf("job ran as:\n%s", got)
+	}
+
+	if st, _ := os.Stat(filepath.Join(dirs.State, "job.conf")); st.Mode().Perm() != 0o640 {
+		t.Errorf("config mode = %v, want 0640", st.Mode().Perm())
+	}
+
+	if st, _ := os.Stat(dirs.Data("job")); st.Mode().Perm() != 0o750 {
+		t.Errorf("data directory mode = %v, want 0750", st.Mode().Perm())
+	}
+
+	// an account that does not exist: the daemon is not started as root instead
+	svc.Name, svc.User = "ghost", "no-such-account"
+	if err := s.reconcile([]services.Service{svc}); err == nil || s.generation("ghost") != 0 {
+		t.Errorf("unknown account: err = %v, generation %d", err, s.generation("ghost"))
+	}
+}
+
+// A DHCP client cannot take a name other devices trust.
+func TestLeaseNamesReserved(t *testing.T) {
+	ctl, log := fakeControl(t)
+	dirs := services.Dirs{State: t.TempDir()}
+	l := &leaseNames{ctl: ctl, dirs: dirs}
+	cfg := load(t, "apiVersion: v1alpha1\nkind: DNSServerConfig\nlistenLinks: [lan0]\nlocalDomain: home.arpa\n")
+
+	exp := time.Now().Add(time.Hour).Unix()
+	lease := filepath.Join(dirs.State, services.Kea4LeaseFile)
+	_ = os.MkdirAll(filepath.Dir(lease), 0o755)
+	_ = os.WriteFile(lease, []byte(fmt.Sprintf("address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state\n"+
+		"192.168.1.100,aa:bb:cc:dd:ee:01,,3600,%[1]d,1,0,0,wpad,0\n192.168.1.101,aa:bb:cc:dd:ee:02,,3600,%[1]d,1,0,0,WPAD.home.arpa,0\n"+
+		"192.168.1.102,aa:bb:cc:dd:ee:03,,3600,%[1]d,1,0,0,tv,0\n", exp)), 0o644)
+
+	if err := l.sync(cfg, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := calls(t, log); strings.Contains(got, "wpad") || !strings.Contains(got, "tv.home.arpa.") {
+		t.Errorf("published:\n%s", got)
 	}
 }

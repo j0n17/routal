@@ -156,7 +156,7 @@
     },
     "DNSBlocking": {
       "additionalProperties": false,
-      "description": "DNSBlocking is an AdGuard/Pi-hole style blocklist for the DNS server.",
+      "description": "",
       "properties": {
         "allow": {
           "description": "never blocked (even inside a blocked domain)",
@@ -257,6 +257,10 @@
           "minimum": 0,
           "type": "integer"
         },
+        "dnssec": {
+          "description": "DNSSEC validates signed answers and refuses forged ones (default false). The upstreams must return DNSSEC records: public resolvers do, the resolver of an ISP box often does not.",
+          "type": "boolean"
+        },
         "kind": {
           "const": "DNSServerConfig"
         },
@@ -289,6 +293,13 @@
         "registerDHCPLeases": {
           "description": "RegisterDHCPLeases publishes DHCP hostnames as <name>.<localDomain> (default true).",
           "type": "boolean"
+        },
+        "tlsUpstreams": {
+          "description": "TLSUpstreams are resolvers reached over DNS over TLS, so that the ISP cannot read or change the queries; instead of Upstreams.",
+          "items": {
+            "$ref": "#/definitions/TLSUpstream"
+          },
+          "type": "array"
         },
         "upstreams": {
           "description": "Upstreams are the resolvers queries are forwarded to (default: Talos' resolver, 127.0.0.53).",
@@ -1154,6 +1165,43 @@
         "kind",
         "name",
         "link"
+      ],
+      "type": "object"
+    },
+    "TLSUpstream": {
+      "additionalProperties": false,
+      "description": "DNSBlocking is an AdGuard/Pi-hole style blocklist for the DNS server. TLSUpstream is a resolver reached over DNS over TLS.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "format": "ipv4"
+            },
+            {
+              "format": "ipv6"
+            }
+          ],
+          "description": "Address of the resolver.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name the resolver's certificate must hold (e.g. dns.quad9.net).",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "port": {
+          "description": "Port (default 853).",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "name"
       ],
       "type": "object"
     },

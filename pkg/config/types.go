@@ -231,6 +231,12 @@ type DNSServer struct {
 	ListenLinks []string `yaml:"listenLinks" schema:"link"`
 	// Upstreams are the resolvers queries are forwarded to (default: Talos' resolver, 127.0.0.53).
 	Upstreams []netip.Addr `yaml:"upstreams,omitempty"`
+	// TLSUpstreams are resolvers reached over DNS over TLS, so that the ISP cannot read or change
+	// the queries; instead of Upstreams.
+	TLSUpstreams []TLSUpstream `yaml:"tlsUpstreams,omitempty"`
+	// DNSSEC validates signed answers and refuses forged ones (default false). The upstreams must
+	// return DNSSEC records: public resolvers do, the resolver of an ISP box often does not.
+	DNSSEC bool `yaml:"dnssec,omitempty"`
 	// CacheSize in entries (default 10000).
 	CacheSize int `yaml:"cacheSize,omitempty"`
 	// LocalDomain is answered locally and never forwarded (e.g. home.arpa).
@@ -244,6 +250,16 @@ type DNSServer struct {
 }
 
 // DNSBlocking is an AdGuard/Pi-hole style blocklist for the DNS server.
+// TLSUpstream is a resolver reached over DNS over TLS.
+type TLSUpstream struct {
+	// Address of the resolver.
+	Address netip.Addr `yaml:"address"`
+	// Name the resolver's certificate must hold (e.g. dns.quad9.net).
+	Name string `yaml:"name"`
+	// Port (default 853).
+	Port uint16 `yaml:"port,omitempty"`
+}
+
 type DNSBlocking struct {
 	// Lists are URLs of hosts files, domain lists or AdBlock-style lists (||domain^), downloaded
 	// by routald and refreshed every Refresh.

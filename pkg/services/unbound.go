@@ -13,8 +13,19 @@ import (
 // HostDNS is the Talos host DNS resolver, the upstream when DNSServerConfig has none.
 const HostDNS = "127.0.0.53"
 
-// UnboundControlSocket is unbound's control socket in Dirs.Run (routald pushes DHCP names through it).
-const UnboundControlSocket = "unbound.ctl"
+// Files of the extension image: the root zone's DNSSEC keys (Alpine's dnssec-root, updated with the
+// image) and the certificate authorities that sign the certificates of DNS over TLS resolvers.
+const (
+	RootTrustAnchor = "/usr/share/dnssec-root/trusted-key.key"
+	CABundle        = "/etc/ssl/certs/ca-certificates.crt"
+)
+
+// UnboundControlSocket is unbound's control socket, relative to Dirs.Run (routald pushes DHCP names
+// and blocked zones through it).
+const (
+	unboundDir           = "unbound"
+	UnboundControlSocket = unboundDir + "/unbound.ctl"
+)
 
 // rebind protection: upstream answers may not point into local networks
 var privateRanges = []string{
@@ -39,14 +50,25 @@ func unbound(cfg *config.Config, e env.Env, d Dirs) (string, []string) {
 	line("\tdo-daemonize: no")
 	line("\tuse-syslog: no")
 	line(`	logfile: ""`)
-	line(`	username: ""`)
+	line(`	username: ""`) // routald starts it as the unbound account already
 	line(`	chroot: ""`)
-	line("\tdirectory: %q", d.State)
-	line("\tpidfile: %q", d.Run+"/unbound.pid")
-	line("\tmodule-config: \"iterator\"")
+	line("\tdirectory: %q", d.Data(unboundDir))
+	line("\tpidfile: %q", d.Runtime(unboundDir)+"/unbound.pid")
+
+	if dns.DNSSEC {
+		line("\tmodule-config: \"validator iterator\"")
+		line("\ttrust-anchor-file: %q", RootTrustAnchor)
+	} else {
+		line("\tmodule-config: \"iterator\"")
+	}
+
+	if len(dns.TLSUpstreams) > 0 {
+		line("\ttls-cert-bundle: %q", CABundle)
+	}
+
 	line("\tip-freebind: yes")
 
-	if len(dns.Upstreams) == 0 {
+	if len(dns.Upstreams) == 0 && len(dns.TLSUpstreams) == 0 {
 		line("\tdo-not-query-localhost: no") // the default upstream, Talos' resolver, is on localhost
 	}
 
@@ -112,7 +134,14 @@ func unbound(cfg *config.Config, e env.Env, d Dirs) (string, []string) {
 	line("forward-zone:")
 	line(`	name: "."`)
 
-	if len(dns.Upstreams) == 0 {
+	switch {
+	case len(dns.TLSUpstreams) > 0:
+		line("\tforward-tls-upstream: yes")
+
+		for _, u := range dns.TLSUpstreams {
+			line("\tforward-addr: %s@%d#%s", u.Address, u.Port, u.Name) // the certificate must hold the name
+		}
+	case len(dns.Upstreams) == 0:
 		line("\tforward-addr: %s", HostDNS)
 	}
 

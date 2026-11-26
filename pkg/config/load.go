@@ -326,6 +326,12 @@ func (cfg *Config) applyDefaults() {
 			cfg.DNSServer.CacheSize = 10000
 		}
 
+		for i := range cfg.DNSServer.TLSUpstreams {
+			if cfg.DNSServer.TLSUpstreams[i].Port == 0 {
+				cfg.DNSServer.TLSUpstreams[i].Port = 853
+			}
+		}
+
 		if cfg.DNSServer.RegisterDHCPLeases == nil {
 			cfg.DNSServer.RegisterDHCPLeases = new(true)
 		}
@@ -400,6 +406,8 @@ func (cfg *Config) applyDefaults() {
 
 // ServiceLinks returns the links the router's own services (DHCP, DNS, NTP, router
 // advertisements, UPnP, mDNS) serve, sorted.
+//
+// (see also WANLinks, the links to the Internet)
 func (cfg *Config) ServiceLinks() []string {
 	var out []string
 
@@ -480,4 +488,30 @@ func (cfg *Config) RuleSources(r FirewallRule) []netip.Prefix {
 	}
 
 	return subnets
+}
+
+// WANLinks returns the links to the Internet, as the config tells them: where traffic is
+// masqueraded, PPPoE sessions, the links a prefix is delegated on and the external link of UPnP.
+func (cfg *Config) WANLinks() []string {
+	var out []string
+
+	for _, m := range cfg.Masquerades {
+		out = append(out, m.OutLink)
+	}
+
+	for _, p := range cfg.PPPoE {
+		out = append(out, p.Interface)
+	}
+
+	for _, p := range cfg.PrefixDelegations {
+		out = append(out, p.Link)
+	}
+
+	if cfg.UPnP != nil {
+		out = append(out, cfg.UPnP.ExternalLink)
+	}
+
+	slices.Sort(out)
+
+	return slices.Compact(out)
 }

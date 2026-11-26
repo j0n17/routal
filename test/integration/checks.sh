@@ -219,6 +219,35 @@ bg nas "mkdir -p /tmp/nas-services /run/avahi-daemon && cp /tmp/smb.service /tmp
 mdns() { nsx laptop mdns-a | grep -q "c0 a8 1e 0a"; } # 192.168.30.10 in the answer
 wait_for 20 mdns && pass "laptop resolves nas.local (announced on VLAN 30) through the reflector" || fail "mDNS reflection: $(nsx laptop mdns-a)"
 
+echo "== hardening: daemon accounts, UPnP range, Talos API, WAN closed by default"
+# every daemon routald started has left root (pppd, later, is the exception)
+rpid=$(nsx router pgrep -x "${ROUTALD##* }" | head -1)
+kids=$(nsx router pgrep -P "$rpid")
+roots=$(for p in $kids; do [ "$(stat -c %U "/proc/$p")" = root ] && cat "/proc/$p/comm"; done | tr '\n' ' ')
+owners=$(for p in $kids; do echo "$(cat "/proc/$p/comm")=$(stat -c %U "/proc/$p")"; done | sort | tr '\n' ' ')
+[ -n "$kids" ] && [ -z "$roots" ] && pass "no daemon runs as root: $owners" || fail "daemons running as root: $roots($owners)"
+upid=$(for p in $kids; do [ "$(cat "/proc/$p/comm")" = unbound ] && echo "$p"; done | head -1)
+caps=$(sed -n 's/^CapEff:[[:space:]]*//p' "/proc/$upid/status")
+[ "$caps" = 0000000000000400 ] && pass "unbound only keeps CAP_NET_BIND_SERVICE" || fail "unbound capabilities: $caps (pid $upid)"
+# listeners on the router itself: one inside the UPnP mapping range, one on the Talos API port
+serve router 30000 router-high
+serve router 50000 talos-api
+sleep 1
+expect blocked "UPnP range without a mapping: servers -> router:30000" nas tcp 192.168.30.1 30000
+expect blocked "UPnP range without a mapping: LAN -> router:30000" laptop tcp 192.168.1.1 30000
+expect blocked "UPnP range without a mapping: WAN -> router:30000" isp tcp 203.0.113.2 30000
+expect ok "Talos API port from the LAN" laptop tcp 192.168.1.1 50000
+expect blocked "Talos API port from the WAN" isp tcp 203.0.113.2 50000
+expect blocked "Talos API port from the WAN over IPv6" isp tcp '[2001:db8:ff::2]' 50000 TCP6
+# the WAN link is closed by default: a port no rule knows about, outside the UPnP range
+serve router 60123 router-any
+sleep 1
+expect ok "a port no rule opens, from the LAN" laptop tcp 192.168.1.1 60123
+expect blocked "WAN closed by default: router:60123" isp tcp 203.0.113.2 60123
+expect blocked "WAN closed by default: router:60123 over IPv6" isp tcp '[2001:db8:ff::2]' 60123 TCP6
+expect ok "WAN: the router answers ping" isp sh -c 'ping -c1 -W2 203.0.113.2 >/dev/null && echo pong'
+expect ok "WAN: the router answers ping over IPv6" isp sh -c 'ping -6 -c1 -W2 2001:db8:ff::2 >/dev/null && echo pong'
+
 echo "== options: SNAT address, IPv6 port forward with toPort, forwardDefault, 0.0.0.0 blocking, DHCPv6 options, forwarding per family"
 nsx router cp /tmp/router.yaml /tmp/router-base.yaml
 nsx router ip addr add 203.0.113.7/24 dev "$R_WAN" # a second public address, for the SNAT

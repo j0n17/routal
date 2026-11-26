@@ -290,6 +290,11 @@ apiVersion: v1alpha1
 kind: DNSServerConfig
 listenLinks: [lan0, srv0, wg0]          # the router's addresses on these links
 upstreams: [9.9.9.9, 2620:fe::fe]       # default: Talos' resolver (127.0.0.53)
+# tlsUpstreams:                         # instead of upstreams: DNS over TLS, the ISP cannot read the queries
+#   - address: 9.9.9.9
+#     name: dns.quad9.net               # the name on the resolver's certificate
+#     port: 853                         # default 853
+dnssec: true                            # default false: refuse forged answers (the upstreams must return DNSSEC records)
 cacheSize: 10000                        # entries (default 10000)
 localDomain: home.arpa                  # answered locally, never forwarded
 registerDHCPLeases: true                # default true: DHCP hostnames become <name>.home.arpa

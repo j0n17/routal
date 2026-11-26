@@ -258,6 +258,7 @@ localRecords: [{name: taken, addresses: [192.168.1.2]}]
 	leases := "address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context,pool_id\n" +
 		fmt.Sprintf("192.168.1.100,aa:bb:cc:dd:ee:01,,3600,%d,1,0,0,phone,0,,0\n", exp) +
 		fmt.Sprintf("192.168.1.101,aa:bb:cc:dd:ee:02,,3600,%d,1,0,0,taken,0,,0\n", exp)
+	_ = os.MkdirAll(filepath.Dir(filepath.Join(dirs.State, services.Kea4LeaseFile)), 0o755)
 	_ = os.WriteFile(filepath.Join(dirs.State, services.Kea4LeaseFile), []byte(leases), 0o644)
 
 	if err := l.sync(cfg, 1); err != nil {
@@ -291,7 +292,7 @@ localRecords: [{name: taken, addresses: [192.168.1.2]}]
 }
 
 func TestCommand(t *testing.T) {
-	c := command([]string{"/usr/sbin/x", "-c", "{conf}", "--x={conf}"}, "/state/x.conf", []string{"A=1"})
+	c := command([]string{"/usr/sbin/x", "-c", "{conf}", "--x={conf}"}, "/state/x.conf", []string{"A=1"}, nil, nil)
 	if strings.Join(c.Args, " ") != "/usr/sbin/x -c /state/x.conf --x=/state/x.conf" {
 		t.Errorf("args = %v", c.Args)
 	}

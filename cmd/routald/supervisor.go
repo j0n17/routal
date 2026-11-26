@@ -8,8 +8,10 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -139,17 +141,29 @@ func (s *supervisor) start(svc services.Service) error {
 		}
 	}
 
+	cred, err := s.identity(svc)
+	if err != nil {
+		return err
+	}
+
 	path := filepath.Join(s.dirs.State, svc.File)
 	old := s.procs[svc.Name]
 
 	if old == nil || old.svc.Config != svc.Config {
-		// configs may hold secrets (PPPoE password, DNS provider token)
+		// configs may hold secrets (PPPoE password, DNS provider token): readable by root and,
+		// through its group, by the daemon's account only
 		if err := os.WriteFile(path+".new", []byte(svc.Config), 0o600); err != nil {
 			return err
 		}
 
+		if cred != nil {
+			if err := errors.Join(os.Chown(path+".new", 0, int(cred.Gid)), os.Chmod(path+".new", 0o640)); err != nil {
+				return err
+			}
+		}
+
 		if svc.Test != nil {
-			test := command(svc.Test, path+".new", svc.Env)
+			test := command(svc.Test, path+".new", svc.Env, cred, nil)
 			if out, err := test.CombinedOutput(); err != nil {
 				return fmt.Errorf("generated config rejected, keeping the running one: %w: %s", err, strings.TrimSpace(string(out)))
 			}
@@ -172,7 +186,7 @@ func (s *supervisor) start(svc services.Service) error {
 		}
 	}
 
-	cmd := command(svc.Command, path, svc.Env)
+	cmd := command(svc.Command, path, svc.Env, cred, svc.Caps)
 
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -208,7 +222,48 @@ func (s *supervisor) stopAll() {
 	}
 }
 
-func command(argv []string, conf string, env []string) *exec.Cmd {
+// lookupUser returns the uid and gid of an account of the container (/etc/passwd).
+var lookupUser = func(name string) (uid, gid uint32, err error) {
+	u, err := user.Lookup(name)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	id, err := strconv.ParseUint(u.Uid, 10, 32)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	group, err := strconv.ParseUint(u.Gid, 10, 32)
+
+	return uint32(id), uint32(group), err
+}
+
+// identity returns the account a service runs as (nil: root) and makes its directories, which
+// only that account can enter. A service whose account is missing is not started as root instead.
+func (s *supervisor) identity(svc services.Service) (*syscall.Credential, error) {
+	if svc.User == "" {
+		return nil, nil
+	}
+
+	uid, gid, err := lookupUser(svc.User)
+	if err != nil {
+		return nil, fmt.Errorf("account %s: %w", svc.User, err)
+	}
+
+	for _, dir := range []string{s.dirs.Data(svc.Dir), s.dirs.Runtime(svc.Dir)} {
+		if err := errors.Join(os.MkdirAll(dir, 0o750), os.Chown(dir, int(uid), int(gid)), os.Chmod(dir, 0o750)); err != nil {
+			return nil, err
+		}
+	}
+
+	// no supplementary groups
+	return &syscall.Credential{Uid: uid, Gid: gid}, nil
+}
+
+// command builds the command of a daemon or of its config check. With cred, the process leaves
+// root before it executes and keeps caps as its only capabilities.
+func command(argv []string, conf string, env []string, cred *syscall.Credential, caps []uintptr) *exec.Cmd {
 	args := slices.Clone(argv)
 	for i, a := range args {
 		args[i] = strings.ReplaceAll(a, "{conf}", conf)
@@ -218,6 +273,11 @@ func command(argv []string, conf string, env []string) *exec.Cmd {
 	// extension services start with an empty environment
 	cmd.Env = append([]string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}, env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // see proc.stop
+
+	if cred != nil {
+		cmd.SysProcAttr.Credential = cred
+		cmd.SysProcAttr.AmbientCaps = caps
+	}
 
 	return cmd
 }

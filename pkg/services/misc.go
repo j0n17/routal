@@ -132,8 +132,8 @@ func chrony(cfg *config.Config, e env.Env, d Dirs) (string, []string) {
 	}
 
 	line("local stratum 10") // keep serving if the upstreams are unreachable
-	line("driftfile %s/chrony.drift", d.State)
-	line("pidfile %s/chronyd.pid", d.Run)
+	line("driftfile %s/chrony.drift", d.Data("chrony"))
+	line("pidfile %s/chronyd.pid", d.Runtime("chrony"))
 	line("cmdport 0")
 
 	return b.String(), warn
@@ -195,7 +195,7 @@ func miniupnpd(cfg *config.Config, e env.Env, d Dirs) (string, []string) {
 	line("secure_mode=yes") // a device may only map ports to itself
 	line("system_uptime=yes")
 	line("ext_allow_private_ipv4=yes") // behind a CGNAT or another router, mappings still help
-	line("lease_file=%s/upnp.leases", d.State)
+	line("lease_file=%s/upnp.leases", d.Data("miniupnpd"))
 	line("uuid=%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 	line("upnp_table_name=%s", nft.UPnPTable)
 	line("upnp_nat_table_name=%s", nft.UPnPTable)

@@ -41,7 +41,9 @@ func TestRenderHomeRouter(t *testing.T) {
 		`iifname { "eth1" } meta l4proto udp th dport { 53, 67 } accept comment "lan-dns-dhcp"`,
 		`iifname { "eth1" } meta l4proto tcp th dport { 53 } accept comment "lan-dns-tcp"`,
 		"iifname \"lo\" accept\n\t\tmeta l4proto udp th dport { 53, 67, 1900, 5351 } drop\n\t\tmeta l4proto tcp th dport { 53, 443, 5000 } drop\n",
-		`iifname "wan0" meta l4proto udp th dport { 1024-49151 } drop comment "upnp: no mapping"`,
+		"\t\tmeta l4proto udp th dport { 1024-49151 } drop comment \"upnp: no mapping\"",
+		// the Talos API is closed on the WAN link whatever talos.yaml opens
+		`iifname { "wan0" } drop comment "wan: closed by default"`,
 		`iifname "wan0" fib daddr . iif type local meta nfproto ipv4 tcp dport { 443 } dnat ip to 192.168.1.10 comment "nas-https"`,
 		`oifname "wan0" ip saddr { 192.168.1.0/24 } masquerade comment "lan-out"`,
 	} {
@@ -279,9 +281,8 @@ internalLinks: [lan0]
 		// UPnP
 		`iifname "wan0" oifname { "lan0" } ct status dnat accept comment "upnp"`,
 		`meta sdifname "wan0" oifname { "lan0" } ct status dnat accept comment "upnp"`,
-		`meta sdifname "wan0" meta l4proto tcp th dport { 1024-49151 } drop comment "upnp: no mapping"`,
 		"ct state established,related accept\n\t\tiifname { \"lan0\" } meta l4proto udp th dport { 1900, 5351 } accept comment \"upnp\"",
-		`iifname "wan0" meta l4proto tcp th dport { 1024-49151 } drop comment "upnp: no mapping"`,
+		"\t\tmeta l4proto tcp th dport { 1024-49151 } drop comment \"upnp: no mapping\"",
 		"add table inet routal_upnp\n",
 		"add chain inet routal_upnp prerouting { type nat hook prerouting priority dstnat; policy accept; }",
 	} {
@@ -293,6 +294,85 @@ internalLinks: [lan0]
 	// offline: the public address is unknown, so no reflection DNAT
 	if strings.Contains(nft.Render(cfg, env.Static()), "daddr { 203.0.113.5 }") {
 		t.Error("reflection rendered without a known address")
+	}
+}
+
+// With UPnP, the mapping range is closed on every link; the mDNS reflector still gets its answers.
+func TestRenderUPnPRangeClosed(t *testing.T) {
+	cfg, err := config.Load([]byte(`apiVersion: v1alpha1
+kind: UPnPConfig
+externalLink: wan0
+internalLinks: [lan0]
+---
+apiVersion: v1alpha1
+kind: MDNSReflectorConfig
+links: [lan0, iot0]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := nft.Render(cfg, env.Static())
+
+	for _, want := range []string{
+		`iifname { "iot0", "lan0" } udp sport 5353 udp dport 32768-60999 accept comment "mdns answers"`,
+		"iifname \"lo\" accept\n\t\tmeta l4proto udp th dport { 1900, 5351 } drop\n",
+		`iifname { "wan0" } drop comment "wan: closed by default"`,
+		"\t\tmeta l4proto tcp th dport { 1024-49151 } drop comment \"upnp: no mapping\"\n",
+		"\t\tmeta l4proto udp th dport { 1024-49151 } drop comment \"upnp: no mapping\"\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+
+	if strings.Contains(out, `iifname "wan0" meta l4proto`) {
+		t.Errorf("the range is only closed on the external link:\n%s", out)
+	}
+}
+
+// A rule can open the Talos API on a WAN link: it comes before the drop.
+func TestRenderWANClosedByDefault(t *testing.T) {
+	cfg, err := config.Load([]byte(`apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: out
+outLink: wan0
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: admin
+from: wan
+to: self
+protocol: tcp
+ports: [50000]
+sourceSubnets: [198.51.100.7/32]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := nft.Render(cfg, env.Static())
+	accept := strings.Index(out, `iifname { "wan0" } ip saddr { 198.51.100.7/32 } meta l4proto tcp th dport { 50000 } accept comment "admin"`)
+	drop := strings.Index(out, `iifname { "wan0" } drop comment "wan: closed by default"`)
+
+	if accept < 0 || drop < accept {
+		t.Errorf("accept at %d, drop at %d in:\n%s", accept, drop, out)
+	}
+
+	for _, want := range []string{
+		`iifname { "wan0" } icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert, mld-listener-query, mld-listener-report, mld-listener-done, mld2-listener-report } accept`,
+		`iifname { "wan0" } icmp type echo-request limit rate 10/second burst 20 packets accept`,
+		`iifname { "wan0" } udp sport 67 udp dport 68 accept comment "dhcp client"`,
+		`iifname { "wan0" } ip6 saddr fe80::/10 udp dport 546 accept comment "dhcpv6 client"`,
+	} {
+		if i := strings.Index(out, want); i < 0 || i > drop {
+			t.Errorf("missing before the drop: %s\n%s", want, out)
+		}
 	}
 }
 

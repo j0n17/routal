@@ -12,10 +12,11 @@ import (
 	"github.com/j0n17/routal/pkg/env"
 )
 
-// Kea lease files (memfile, CSV) in Dirs.State.
+// Kea lease files (memfile, CSV), relative to Dirs.State: in the directory of the kea account.
 const (
-	Kea4LeaseFile = "kea-leases4.csv"
-	Kea6LeaseFile = "kea-leases6.csv"
+	keaDir        = "kea"
+	Kea4LeaseFile = keaDir + "/kea-leases4.csv"
+	Kea6LeaseFile = keaDir + "/kea-leases6.csv"
 )
 
 type obj = map[string]any

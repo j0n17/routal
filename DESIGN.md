@@ -33,9 +33,10 @@ git ──> talosctl patch mc --mode try (CI or on-device agent, later)
 - DHCP client names reach DNS without restarting Unbound: routald reads Kea's lease file and pushes
   `local_data` through unbound-control (labels are validated: clients choose their names).
 - Kea >= 2.6.3 only accepts lease files under its data directory: routald sets `KEA_DHCP_DATA_DIR`.
-- UPnP: the mapping port range (default 1024-49151, never the Talos API) is opened in Talos; routald
-  drops it on the external link unless miniupnpd DNATed it. Dropping it on every link broke replies
-  to router daemons (the mDNS reflector's legacy unicast answers use ephemeral ports).
+- UPnP: the mapping port range (default 1024-49151, never the Talos API) is opened in Talos for
+  every source (its rules cannot name a link); routald drops, on every link, what reaches the
+  router itself there without a mapping or a rule. One exception, which conntrack cannot match:
+  unicast answers (from port 5353, to an ephemeral port) to the mDNS reflector's queries.
 - Port forward reflection needs the router's public address: routald renders it from the link's
   current addresses and re-applies when they change.
 - Talos creates every extension mount source, so `/run` in the container is a bind of the host's
@@ -105,7 +106,7 @@ the LAN only. Both use the unmodified `examples/home-router` files; the MACs mat
 ## Network namespace and containerlab tests (`make integration`, `make clab`)
 Router, two LAN clients, a NAS on VLAN 30, a WAN host and a WireGuard peer, each in its own network
 namespace in one privileged container; the router runs routald with `examples/nas-vpn` plus a port
-forward and UPnP. 76 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
+forward and UPnP. 89 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
 dynamic names, reverse, forwarding), the NAS matrix in IPv4 and IPv6, masquerade, port forward,
 reflection, UPnP mapping and secure mode, NTP, mDNS across the VLAN. Talos itself is emulated
 (links, addresses, aliases); its ingress firewall is not.
@@ -201,15 +202,11 @@ Fixed after a full read of the code:
 - `render-services` writes configs 0600 (they may hold secrets).
 
 Known and left as is:
-- UPnP opens its mapping range in Talos; routald drops it on the external link only (router
-  daemons need ephemeral ports there on the other links), so other zones reach router listeners in
-  1024-49151, if any.
 - `MasqueradeConfig` without `sourceSubnets` also translates IPv6.
 - A daemon whose new config is rejected keeps running the old one, but is not restarted with it if
   it then exits.
 - The delegated prefix is not reloaded from its state file after a routald restart; a prefix that
   changes meanwhile leaves the old addresses until they expire.
-- DHCP clients choose their DNS name (`wpad` is not refused).
 
 ## DNS blocking (2026-11-14)
 `DNSServerConfig.blocking`: lists by URL (hosts, domain lists, simple AdBlock `||name^` rules),
@@ -235,7 +232,7 @@ an allowed name inside a blocked zone becomes a transparent zone.
 | cmd/routald | 91.0% |
 | pkg/env | 90.0% |
 
-Every validation error has an invalid variant (test/variants/invalid, 90 files). What is left:
+Every validation error has an invalid variant (test/variants/invalid, 93 files). What is left:
 - the netlink side of the VRF support (the lab's kernel has no VRF; its logic is unit-tested
   against a fake kernel, the real thing was checked on a Talos VM);
 - DHCPv6 client paths the lab's ISP does not produce: a refused renewal (Kea hands out a new prefix
@@ -290,7 +287,7 @@ at it on their first line.
   say: `schema:"link"` (the link name pattern of validation) and `schema:"enum=a|b"`.
 - `make test` fails when the committed file is not what the types generate, when the schema and
   the loader do not know the same kinds, or when an example or valid variant does not match.
-- routald's validation stays the authority. The schema alone refuses 24 of the 90 invalid
+- routald's validation stays the authority. The schema alone refuses 26 of the 93 invalid
   variants: it cannot see references between documents, values that must agree, or files.
 - It is never stricter than routald, and the fuzzer holds it to that: every config routald accepts
   must match the schema. That is why a string also takes a number or a boolean (`username: 12345`
@@ -299,6 +296,22 @@ at it on their first line.
   for an integer (`mtu: 1492.5` is truncated), and `""` for an optional value.
 - Not tested in an editor: the schema is checked with a Go validator (santhosh-tekuri/jsonschema,
   a test-only dependency), not with yaml-language-server itself.
+
+## Hardening (2026-11-17)
+| Topic | What routald does |
+|---|---|
+| Daemon accounts | The supervisor starts each daemon as its own account, with ambient capabilities and no supplementary group: kea-dhcp4 `NET_RAW` + `NET_BIND_SERVICE`, kea-dhcp6, Unbound and chrony `NET_BIND_SERVICE`, radvd `NET_RAW`, miniupnpd `NET_ADMIN` + `NET_RAW` (it writes nftables), Avahi and inadyn none. pppd stays root (it creates the interface and the default route), and so does routald. A daemon whose account is missing is not started. |
+| Files | `/var/lib/routal` and `/run/routal` belong to root. A daemon writes in `<dir>/<account>` only (mode 0750); its config is `root:<group>` 0640. A daemon taken over cannot plant a file where routald writes as root. Leases move to `kea/`: the first start after an upgrade hands out new leases. |
+| WAN closed by default | In `inet routal`, input from the WAN links (`Config.WANLinks`) is dropped after the `to: self` accepts (which match `sourceSubnets`/`sourceGroups` too) and a fixed list: ICMP errors, ping at 10/s, the ICMPv6 of RFC 4890 (ND, RA, MLD, errors), DHCP (67 to 68) and DHCPv6 (fe80::/10 to 546) answers. Talos' own rules match source addresses only: this holds when talos.yaml has no `NetworkDefaultActionConfig` or a rule that is too wide, and covers the Talos API (50000-50001). A router with no WAN link (no masquerade, PPPoE, prefix delegation or UPnP) gets no such drop. |
+| UPnP range | Closed on every link, see above. |
+| DHCP names | `wpad`, `isatap` and `localhost` are never published from a lease: a device named wpad would be the proxy of every browser with proxy auto-discovery. Static leases and local records can use them. |
+| DNSSEC | `dnssec: true`: Unbound's validator with the root keys of the image (`dnssec-root`, both KSK-2017 and KSK-2024). Off by default: an upstream that drops DNSSEC records (many ISP boxes; not checked for Talos' resolver, the default upstream) makes every answer fail. |
+| DNS over TLS | `tlsUpstreams` (address, certificate name, port 853): `forward-tls-upstream` with the image's CA bundle. Not mixed with `upstreams`. Unbound cannot forward over HTTPS; DoH would need another forwarder (e.g. dnsproxy or cloudflared) in front. |
+
+Checked: the lab (accounts and capabilities read from /proc, the three listeners) and, by hand,
+the rendered Unbound config against Quad9 and Cloudflare (a signed name has the `ad` flag,
+dnssec-failed.org is SERVFAIL). Not checked on a Talos VM yet: the accounts rely on the extension
+container having all capabilities, as it does for nftables today.
 
 ## Talos kernel (v1.15.0-beta.0), checked on the VM
 | Feature | Kernel | Consequence |

@@ -3,6 +3,7 @@ package services_test
 import (
 	"encoding/json"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -118,7 +119,7 @@ func TestRenderNAS(t *testing.T) {
 			`local-data: "nas.home.arpa. 300 IN A 192.168.30.10"`,
 			`local-data-ptr: "192.168.30.10 nas.home.arpa"`,
 			"forward-addr: 9.9.9.9\n", "forward-addr: 2620:fe::fe\n",
-			`control-interface: "/run/routal/unbound.ctl"`,
+			`control-interface: "/run/routal/unbound/unbound.ctl"`, `directory: "/var/lib/routal/unbound"`, `module-config: "iterator"`,
 		},
 		"radvd": {
 			"interface eth1.30 {", "prefix fd00:30::/64 {", "RDNSS fd00:30::1 {", "DNSSL home.arpa {", "AdvOtherConfigFlag off;",
@@ -298,5 +299,67 @@ ipv6: true
 
 	if services.StaticRecords(&config.Config{}) != nil {
 		t.Error("records without a DNS server")
+	}
+}
+
+func TestUnboundTLSAndDNSSEC(t *testing.T) {
+	cfg, err := config.Load([]byte(`apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+dnssec: true
+tlsUpstreams:
+  - {address: 9.9.9.9, name: dns.quad9.net}
+  - {address: "2606:4700:4700::1111", name: cloudflare-dns.com, port: 8853}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conf := services.Render(cfg, env.Static(), services.DefaultDirs)[0].Config
+
+	for _, want := range []string{
+		`module-config: "validator iterator"`,
+		`trust-anchor-file: "/usr/share/dnssec-root/trusted-key.key"`,
+		`tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"`,
+		"forward-tls-upstream: yes\n",
+		"forward-addr: 9.9.9.9@853#dns.quad9.net\n",
+		"forward-addr: 2606:4700:4700::1111@8853#cloudflare-dns.com\n",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("missing %q in:\n%s", want, conf)
+		}
+	}
+
+	// nothing leaves unencrypted, to Talos' resolver or anywhere else
+	if strings.Contains(conf, services.HostDNS) || strings.Contains(conf, "do-not-query-localhost") {
+		t.Errorf("TLS upstreams still use the host resolver:\n%s", conf)
+	}
+}
+
+// Every daemon but pppd leaves root, with its own directory.
+func TestServiceAccounts(t *testing.T) {
+	raw, err := os.ReadFile("../../examples/reference/router.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadDir(raw, "../../examples/reference")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svcs := services.Render(cfg, env.Static(), services.DefaultDirs)
+	if len(svcs) < 9 {
+		t.Fatalf("the reference example renders %d services", len(svcs))
+	}
+
+	for _, s := range svcs {
+		if strings.HasPrefix(s.Name, "pppd-") {
+			continue
+		}
+
+		if s.User == "" || s.User == "root" || s.Dir == "" {
+			t.Errorf("%s runs as %q in %q", s.Name, s.User, s.Dir)
+		}
 	}
 }
