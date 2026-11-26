@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays: a new Talos release is tested without waiting for a push
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -90,3 +93,38 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: make extension ARCH=${{ matrix.arch }}
+
+  talos-versions:
+    name: Talos versions to test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v5
+      # the version pinned in the Makefile, and the newest release of every minor from 1.15 on
+      - id: list
+        run: |
+          versions=$(hack/talos-versions.sh)
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          echo "Talos versions: $versions" >> "$GITHUB_STEP_SUMMARY"
+
+  talos:
+    name: Talos ${{ matrix.talos }}
+    needs: talos-versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        talos: ${{ fromJSON(needs.talos-versions.outputs.versions) }}
+    steps:
+      - uses: actions/checkout@v5
+      # every example's talos.yaml through this version's talosctl, then its installer image with
+      # the extension (the imager checks the extension against this version)
+      - run: |
+          { make check-talos TALOS_VERSION=${{ matrix.talos }} &&
+            make installer TALOS_VERSION=${{ matrix.talos }}; } 2>&1 | tee ci.log
+      - name: Failure summary
+        if: failure()
+        run: hack/ci-summary.sh ci.log

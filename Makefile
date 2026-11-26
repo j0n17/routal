@@ -7,7 +7,7 @@ OUT           ?= _out
 
 GO = docker run --rm -v "$(CURDIR)":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src $(GO_IMAGE)
 
-.PHONY: test check cover schema fuzz integration clab extension installer push-installer image clean
+.PHONY: test check check-talos cover schema fuzz integration clab extension installer push-installer image clean
 
 test: ## run unit tests (in Docker)
 	$(GO) sh -c 'test -z "$$(gofmt -l .)" && go vet ./... && go test ./...'
@@ -15,6 +15,9 @@ test: ## run unit tests (in Docker)
 check: test ## also check every example with the real tools: nftables ruleset, daemon configs, talos.yaml
 	docker build --platform linux/$(ARCH) --target daemons -t routal-daemons:$(ARCH) .
 	docker run --rm --platform linux/$(ARCH) --cap-add NET_ADMIN -v "$(CURDIR)":/src:ro routal-daemons:$(ARCH) /src/hack/check-configs.sh
+	hack/check-talos.sh $(TALOS_VERSION) $(OUT)/talos-check
+
+check-talos: ## validate every example's talos.yaml with talosctl of TALOS_VERSION (hack/talos-versions.sh lists the ones CI tests)
 	hack/check-talos.sh $(TALOS_VERSION) $(OUT)/talos-check
 
 schema: ## regenerate pkg/schema/router.schema.json from the types and comments of pkg/config

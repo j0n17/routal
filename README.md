@@ -187,6 +187,10 @@ make clab          # the same checks on a containerlab topology (test/clab/routa
 
 GitHub Actions (`.github/workflows/ci.yml`) runs `make check`, `make integration`, `make fuzz
 FUZZTIME=30s` and builds the extension for amd64 and arm64 on every push and pull request.
+It also validates the examples and builds the installer for every Talos version listed by
+`hack/talos-versions.sh` (the one pinned in the Makefile, and the newest release of every minor
+from 1.15 on), on every push and every Monday. For one version locally:
+`make check-talos installer TALOS_VERSION=v1.15.0-beta.0`.
 
 Both run the real routald and daemons with `examples/nas-vpn` and the same 89 checks
 (test/integration/checks.sh): DHCP, SLAAC, DNS, DNS blocking, the firewall in IPv4 and IPv6, NAT,
