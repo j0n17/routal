@@ -16,23 +16,30 @@ concurrency:
 env:
   ARCH: amd64
 
+defaults:
+  run:
+    shell: bash # -o pipefail: a failing make is not hidden by tee
+
 jobs:
   check:
     name: Unit tests, schema, example configs
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # gofmt, go vet, unit tests (among them: the committed JSON schema is up to date), then every
       # example and variant through nft, Kea, Unbound, radvd, chrony, inadyn and talosctl validate
-      - run: make check
+      - run: make check 2>&1 | tee ci.log
+      - name: Failure summary
+        if: failure()
+        run: hack/ci-summary.sh ci.log
 
   integration:
     name: Lab (network namespaces)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # the lab needs VLANs, WireGuard and PPP from the runner's kernel
       - name: Kernel modules
         run: |
@@ -42,14 +49,17 @@ jobs:
             sudo apt-get install -y -q "linux-modules-extra-$(uname -r)"
             sudo modprobe -a $mods
           }
-      - run: make integration
+      - run: make integration 2>&1 | tee ci.log
+      - name: Failure summary
+        if: failure()
+        run: hack/ci-summary.sh ci.log
 
   fuzz:
     name: Fuzzing (30 s per target)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: make fuzz FUZZTIME=30s
       - name: Keep the inputs that failed
         if: failure()
@@ -71,5 +81,5 @@ jobs:
           - {arch: amd64, runner: ubuntu-24.04}
           - {arch: arm64, runner: ubuntu-24.04-arm}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: make extension ARCH=${{ matrix.arch }}
