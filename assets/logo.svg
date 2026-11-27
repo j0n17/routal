@@ -1,16 +1,40 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Routal">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0f2747"/>
-      <stop offset="1" stop-color="#0b6a78"/>
+      <stop offset="0" stop-color="#151b3a"/>
+      <stop offset="1" stop-color="#070a17"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.28" cy="0.2" r="0.9">
+      <stop offset="0" stop-color="#6d7cff" stop-opacity="0.35"/>
+      <stop offset="0.6" stop-color="#6d7cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="up" gradientUnits="userSpaceOnUse" x1="52" y1="0" x2="206" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#34e3d0"/>
+    </linearGradient>
+    <linearGradient id="mid" gradientUnits="userSpaceOnUse" x1="52" y1="0" x2="206" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#7c8cff"/>
+    </linearGradient>
+    <linearGradient id="down" gradientUnits="userSpaceOnUse" x1="52" y1="0" x2="206" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ff7ab8"/>
     </linearGradient>
   </defs>
-  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
-  <!-- an R drawn as a route: in at the bottom left, around the loop, out at the bottom right -->
-  <path d="M86 194V72h52a34 34 0 0 1 0 68H86m46 0 44 54" fill="none" stroke="#f4f8fb" stroke-width="20"
-        stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- the hops -->
-  <circle cx="86" cy="194" r="15" fill="#5eead4" stroke="#0f2747" stroke-width="5"/>
-  <circle cx="176" cy="194" r="15" fill="#5eead4" stroke="#0f2747" stroke-width="5"/>
-  <circle cx="86" cy="72" r="15" fill="#5eead4" stroke="#0f2747" stroke-width="5"/>
+  <rect width="256" height="256" rx="60" fill="url(#bg)"/>
+  <rect width="256" height="256" rx="60" fill="url(#glow)"/>
+  <rect x="1.5" y="1.5" width="253" height="253" rx="58.5" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+  <!-- one way in, three ways out -->
+  <g fill="none" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M56 128h30c40 0 40-62 80-62h36" stroke="url(#up)"/>
+    <path d="M56 128h30c40 0 40 62 80 62h36" stroke="url(#down)"/>
+    <path d="M56 128h146" stroke="url(#mid)"/>
+  </g>
+  <circle cx="56" cy="128" r="17" fill="#ffffff"/>
+  <circle cx="56" cy="128" r="7" fill="#151b3a"/>
+  <g stroke-width="7" fill="#0b0f22">
+    <circle cx="202" cy="66" r="13" stroke="#34e3d0"/>
+    <circle cx="202" cy="128" r="13" stroke="#7c8cff"/>
+    <circle cx="202" cy="190" r="13" stroke="#ff7ab8"/>
+  </g>
 </svg>
