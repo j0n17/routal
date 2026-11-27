@@ -1,6 +1,7 @@
 // Command site generates the project's web page (make site, published by GitHub Pages): the
 // reference of every router.yaml document from the JSON schema, the example routers and the
-// personas the VM test plays, each with its files.
+// personas the VM test plays, each with its files; the guides of docs/ and, under a document of
+// the reference, the hand-written notes of docs/kinds/<Kind>.md.
 //
 //	go run ./hack/site <out dir>
 package main
@@ -337,6 +338,7 @@ main { padding:32px 40px 80px; min-width:0; }
 h1 { font-size:32px; margin:0 0 8px; } h2 { font-size:24px; margin:48px 0 8px; padding-top:16px; border-top:1px solid var(--line); }
 h3 { font-size:18px; margin:32px 0 6px; } h3 code { font-size:17px; }
 p { margin:8px 0; } .muted { color:var(--muted); font-size:14px; font-weight:normal; }
+.note { background:var(--code); border:1px solid var(--line); border-radius:6px; padding:12px 16px; margin:16px 0; }
 .warn { background:var(--warn); border:1px solid var(--line); border-radius:6px; padding:12px 16px; margin:16px 0; }
 table { border-collapse:collapse; width:100%; margin:8px 0 16px; font-size:14px; }
 th,td { text-align:left; vertical-align:top; padding:6px 10px; border-bottom:1px solid var(--line); }
@@ -429,6 +431,12 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 
 	values := referenceValues()
 
+	notes, err := kindNotes(append(slices.Clone(kinds), helpers...))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
 	define := func(name string, document bool) {
 		def := sc.Definitions[name]
 
@@ -440,6 +448,7 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 		fmt.Fprintf(&nav, `<a href="#%s">%s</a>`, name, name)
 		fmt.Fprintf(&body, "<h3 id=%q><code>%s</code><a class=\"anchor\" href=\"#%s\" aria-label=\"Link to %s\">#</a>%s</h3>\n<p>%s</p>\n",
 			name, name, name, name, copyButton, html.EscapeString(def.Description))
+		body.WriteString(notes[name])
 
 		var fields []string
 		for f := range def.Properties {
@@ -549,6 +558,20 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 
 		file(&body, "talos.yaml", filepath.Join(dir, "talos.yaml"), false)
 		file(&body, "router.yaml", path, false)
+	}
+
+	docs, err := guides([]string{"configuration", "security", "bgp-vrf", "install", "testing"})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	nav.WriteString(`<h2>Guides</h2>`)
+
+	for _, g := range docs {
+		id := "guide-" + g.name
+		fmt.Fprintf(&nav, `<a href="#%s">%s</a>`, id, html.EscapeString(g.title))
+		fmt.Fprintf(&body, "<h2 id=%q>%s<a class=\"anchor\" href=\"#%s\" aria-label=\"Link to this guide\">#</a></h2>\n%s", id, html.EscapeString(g.title), id, g.html)
 	}
 
 	page := fmt.Sprintf(`<!doctype html>

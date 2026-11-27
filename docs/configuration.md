@@ -12,39 +12,10 @@ my-router/
 Every field is in [`examples/reference/router.yaml`](../examples/reference/router.yaml). All
 examples are checked by `make check` (routald, the real daemons, and `talosctl validate`).
 
-## Who does what
-
-| Talos (unmodified) | routald extension |
-|---|---|
-| interfaces, VLANs, bonds, bridges, WireGuard, DHCP client, static routes | IP forwarding |
-| BGP (`BGPInstanceConfig`), VRFs (`VRFConfig`), policy routing (`RoutingRuleConfig`) | firewall, NAT and services that follow links into a VRF |
-| ingress firewall for the router itself | zone firewall for forwarded traffic, address/port groups |
-| A/B upgrades, `apply-config --mode try` (auto-rollback) | masquerade / SNAT, port forwards (with NAT loopback), UPnP |
-| | WAN: PPPoE, IPv6 prefix delegation, dynamic DNS |
-| API, `talosctl`, Kubernetes-free mode | DHCP (Kea), caching DNS with blocklists (Unbound), IPv6 RA (radvd), NTP (chrony), mDNS reflector (Avahi) |
-
 ## Router documents (`apiVersion: v1alpha1`)
 
-| Kind | Purpose | Implemented by |
-|---|---|---|
-| `ForwardingConfig` | IPv4/IPv6 forwarding (default on) | sysctls |
-| `FirewallConfig` | default for forwarded traffic (`block`), `logBlocked` | nftables |
-| `FirewallZoneConfig` | named group of links | nftables |
-| `FirewallRuleConfig` | stateful rule from a zone to a zone or `self`, first match wins | nftables |
-| `FirewallAddressGroupConfig` | named IPv4/IPv6 subnets, used as `sourceGroups`/`destinationGroups` | nftables sets |
-| `FirewallPortGroupConfig` | named ports, used as `portGroups` | nftables sets |
-| `MasqueradeConfig` | source NAT on an outgoing link | nftables |
-| `PortForwardConfig` | destination NAT on an incoming link, reflected for inside clients (`reflection`, default on) | nftables |
-| `UPnPConfig` | devices open their own forwards (UPnP IGD, NAT-PMP, PCP), to their own address only | miniupnpd |
-| `DHCPServerConfig` | DHCPv4 pools, options and static leases (by MAC) | Kea |
-| `DNSServerConfig` | caching DNS, local domain, DHCP client names, static records, blocklists (AdGuard / Pi-hole style), DNS over TLS upstreams (`tlsUpstreams`), DNSSEC validation (`dnssec`) | Unbound |
-| `RouterAdvertisementConfig` | IPv6 SLAAC, optionally DHCPv6 options (`other`) | radvd, Kea |
-| `NTPServerConfig` | time for local networks (does not touch the clock, Talos does) | chrony |
-| `MDNSReflectorConfig` | mDNS/Bonjour across links (printers, AirPlay, Chromecast across VLANs) | Avahi |
-| `PPPoEConfig` | dial the ISP over PPPoE (also on a VLAN); the session is a link (`ppp0`) for zones and NAT | pppd + rp-pppoe |
-| `PrefixDelegationConfig` | IPv6 prefix from the ISP (DHCPv6 IA_PD), a /64 per LAN link, followed by router advertisements | routald |
-| `DynamicDNSConfig` | keep a public name on the WAN address (Cloudflare, DuckDNS, dyndns2...) | inadyn |
-
+Every document, every field and a template to copy: the
+[reference on the web page](https://j0n17.github.io/routal/#documents), generated from the schema.
 Unknown fields are errors. routald programs its own `inet routal` nftables table; Talos keeps
 `inet talos`.
 
@@ -60,12 +31,7 @@ router.yaml never depends on the order in which the kernel finds the NICs:
 
 The VM test selects its WAN by MAC address and its LAN by bus path.
 
-> [!WARNING]
-> Leave forwarding to routald (`ForwardingConfig`, on by default). It turns the kernel switches on
-> only once its firewall rules are loaded. If `machine.sysctls` in talos.yaml also sets
-> `net.ipv4.ip_forward` or `net.ipv4.conf.all.forwarding` / `net.ipv6.conf.all.forwarding`, two
-> components write the same setting: which one wins is not tested, and forwarding could be on
-> before the firewall is.
+Leave IP forwarding to routald (`ForwardingConfig`): do not set it in `machine.sysctls`.
 
 ## Secrets
 

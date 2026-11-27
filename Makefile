@@ -98,8 +98,8 @@ vm-test: ## boot Talos TALOS_VERSION with the extension in a VM (tart on an Appl
 vm-upgrade-test: ## Linux: boot the build of test/vm/upgrade-from, upgrade it to this one with talosctl upgrade, check that the state is kept
 	hack/vm-upgrade.sh $(TALOS_VERSION) $(OUT) $(VM_ARCH)
 
-site: ## the project's web page (reference from the schema, examples, personas): $(OUT)/site/index.html
-	$(GO) go run ./hack/site $(OUT)/site
+site: ## the project's web page (reference from the schema, docs/, examples, personas): $(OUT)/site/index.html; hack/site is a module of its own, its dependencies stay out of routald
+	$(GO) sh -c "go build -C hack/site -o /tmp/site . && /tmp/site $(OUT)/site"
 
 clean:
 	rm -f $(OUT)/*.tar $(OUT)/*.raw $(OUT)/*.yaml
