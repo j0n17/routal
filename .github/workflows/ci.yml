@@ -5,9 +5,9 @@ on:
   push:
     branches: [main]
     # the web page and the documents have their own workflow (pages.yml) or none: no tests to run
-    paths-ignore: [README.md, DESIGN.md, LICENSE, assets/**, hack/site/**, .github/workflows/pages.yml]
+    paths-ignore: [README.md, DESIGN.md, docs/**, LICENSE, assets/**, hack/site/**, .github/workflows/pages.yml]
   pull_request:
-    paths-ignore: [README.md, DESIGN.md, LICENSE, assets/**, hack/site/**, .github/workflows/pages.yml]
+    paths-ignore: [README.md, DESIGN.md, docs/**, LICENSE, assets/**, hack/site/**, .github/workflows/pages.yml]
   schedule:
     - cron: "17 5 * * 1" # Mondays: a new Talos release is tested without waiting for a push
   workflow_dispatch:
