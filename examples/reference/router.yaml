@@ -14,6 +14,9 @@
 # Links are kernel names or Talos LinkAliasConfig names. Ports are 443, "443" or "8000-9000".
 
 # --- Forwarding (one at most) ------------------------------------------------
+# routald turns forwarding on itself, once its firewall rules are loaded. Do not set the same
+# sysctls (net.ipv4.ip_forward, net.ipv*.conf.all.forwarding) in machine.sysctls of talos.yaml: two
+# components would write one setting, and forwarding could be on before the firewall is.
 apiVersion: v1alpha1
 kind: ForwardingConfig
 ipv4: true # default true

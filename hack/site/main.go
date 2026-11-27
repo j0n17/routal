@@ -495,6 +495,11 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 
 	section("personas", "Personas", "Who uses such a router, and what each of them expects. The tests boot a real Talos in a VM, apply each of these configs, and check every line below from a device behind the router, a visitor on a VLAN, a laptop on the road and the Internet side.")
 
+	// the machine the personas run on: where the links of their zones come from
+	body.WriteString("<p>In these files <code>wan0</code>, <code>lan0</code> and <code>guest0</code> are not kernel names: they are aliases, a VLAN and a WireGuard link declared on the Talos side, where each NIC is selected by a property that does not change (its MAC address, its place on the PCI bus).</p>\n")
+	file(&body, "talos.yaml (links of the test router)", "test/vm/talos.yaml", false)
+	file(&body, "talos.yaml, continued (LAN, guest VLAN, WireGuard)", "test/vm/lan-nic.yaml", false)
+
 	for _, path := range personas {
 		dir := filepath.Dir(path)
 		name := regexp.MustCompile(`^\d+-`).ReplaceAllString(filepath.Base(dir), "")

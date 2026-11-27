@@ -136,8 +136,19 @@ Every field is in [`examples/reference/router.yaml`](examples/reference/router.y
 | `PrefixDelegationConfig` | IPv6 prefix from the ISP (DHCPv6 IA_PD), a /64 per LAN link, followed by router advertisements | routald |
 | `DynamicDNSConfig` | keep a public name on the WAN address (Cloudflare, DuckDNS, dyndns2...) | inadyn |
 
-Links are kernel names or Talos `LinkAliasConfig` aliases (a letter first, at most 15 characters). routald programs its own `inet routal`
+Links are kernel names or Talos `LinkAliasConfig` aliases (a letter first, at most 15 characters).
+An alias is chosen in talos.yaml by an expression on the link's properties, so that router.yaml
+never depends on the order in which the kernel finds the NICs:
+`mac(link.permanent_addr) == "52:54:00:00:00:01"`, `link.bus_path == "0000:00:03.0"`,
+`link.driver == "igc"`. The VM test selects its WAN by MAC address and its LAN by bus path. routald programs its own `inet routal`
 nftables table; Talos keeps `inet talos`. Unknown fields are errors.
+
+> [!WARNING]
+> Leave forwarding to routald (`ForwardingConfig`, on by default). It turns the kernel switches on
+> only once its firewall rules are loaded. If `machine.sysctls` in talos.yaml also sets
+> `net.ipv4.ip_forward` or `net.ipv4.conf.all.forwarding` / `net.ipv6.conf.all.forwarding`, two
+> components write the same setting: which one wins is not tested, and forwarding could be on
+> before the firewall is.
 
 ### Hardening
 

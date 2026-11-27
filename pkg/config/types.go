@@ -87,7 +87,10 @@ func (r *PortRange) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// Forwarding enables IP forwarding between interfaces (kind: ForwardingConfig).
+// Forwarding enables IP forwarding between interfaces (kind: ForwardingConfig). routald writes the
+// kernel switches itself, after its firewall rules are loaded: do not also set net.ipv4.ip_forward,
+// net.ipv4.conf.all.forwarding or net.ipv6.conf.all.forwarding in the machine.sysctls of talos.yaml,
+// or two components write the same setting and forwarding may be on before the firewall is.
 type Forwarding struct {
 	// IPv4 forwards IPv4 between links (default true).
 	IPv4 *bool `yaml:"ipv4,omitempty"`

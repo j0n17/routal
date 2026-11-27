@@ -1,10 +1,12 @@
 ---
-# lan0 on the VM's second NIC: the test's client is behind it
+# lan0 on the VM's second NIC: the test's client is behind it. The WAN is selected by its MAC
+# address (talos.yaml); this one by where it sits on the PCI bus, the other way to name a NIC that
+# does not depend on the order the kernel finds them in (QEMU: the second NIC is in slot 3).
 apiVersion: v1alpha1
 kind: LinkAliasConfig
 name: lan0
 selector:
-  match: mac(link.permanent_addr) == "$LANMAC"
+  match: link.bus_path == "0000:00:03.0"
 ---
 apiVersion: v1alpha1
 kind: LinkConfig
