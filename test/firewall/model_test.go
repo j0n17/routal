@@ -583,9 +583,37 @@ func TestRulesetMatchesModel(t *testing.T) {
 
 		send(t, probes)
 
-		arrived := map[string]map[string]bool{routerNS: seen(t, routerNS)}
-		for _, s := range sides {
-			arrived[hostNS(s)] = seen(t, hostNS(s))
+		arrived := map[string]map[string]bool{}
+
+		collect := func() {
+			for _, ns := range append([]string{routerNS}, "fw-wan", "fw-lan", "fw-guest", "fw-srv") {
+				if arrived[ns] == nil {
+					arrived[ns] = map[string]bool{}
+				}
+
+				for k := range seen(t, ns) {
+					arrived[ns][k] = true
+				}
+			}
+		}
+
+		collect()
+
+		// a packet the model lets through may still be on its way on a busy machine: wait for it
+		// before calling it lost (what the model refuses never arrives, however long one waits)
+		for wait := 0; wait < 3; wait++ {
+			late := false
+
+			for _, p := range probes {
+				late = late || (p.want && !arrived[p.dstNS][fmt.Sprintf("%s/%d/%d", p.proto, p.sport, p.port)])
+			}
+
+			if !late {
+				break
+			}
+
+			time.Sleep(300 * time.Millisecond)
+			collect()
 		}
 
 		for _, p := range probes {
