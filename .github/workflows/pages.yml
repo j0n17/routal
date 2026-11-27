@@ -24,7 +24,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - run: make site
+      # The checkout belongs to the runner's user and the build runs as root in a container: git
+      # refuses to answer there, and go build wants the commit to stamp the binary with.
+      - run: make site GO_IMAGE="-e GOFLAGS=-buildvcs=false golang:1.26"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
