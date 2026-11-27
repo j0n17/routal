@@ -4,37 +4,25 @@
       <stop offset="0" stop-color="#151b3a"/>
       <stop offset="1" stop-color="#070a17"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.28" cy="0.2" r="0.9">
-      <stop offset="0" stop-color="#6d7cff" stop-opacity="0.35"/>
-      <stop offset="0.6" stop-color="#6d7cff" stop-opacity="0"/>
+    <linearGradient id="disc" x1="0.1" y1="0.05" x2="0.9" y2="0.95">
+      <stop offset="0" stop-color="#3df0d6"/>
+      <stop offset="0.55" stop-color="#5b8cff"/>
+      <stop offset="1" stop-color="#9a6bff"/>
+    </linearGradient>
+    <radialGradient id="shine" cx="0.32" cy="0.26" r="0.8">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.35"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="up" gradientUnits="userSpaceOnUse" x1="52" y1="0" x2="206" y2="0">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#34e3d0"/>
-    </linearGradient>
-    <linearGradient id="mid" gradientUnits="userSpaceOnUse" x1="52" y1="0" x2="206" y2="0">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#7c8cff"/>
-    </linearGradient>
-    <linearGradient id="down" gradientUnits="userSpaceOnUse" x1="52" y1="0" x2="206" y2="0">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#ff7ab8"/>
-    </linearGradient>
   </defs>
   <rect width="256" height="256" rx="60" fill="url(#bg)"/>
-  <rect width="256" height="256" rx="60" fill="url(#glow)"/>
   <rect x="1.5" y="1.5" width="253" height="253" rx="58.5" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
-  <!-- one way in, three ways out -->
-  <g fill="none" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M56 128h30c40 0 40-62 80-62h36" stroke="url(#up)"/>
-    <path d="M56 128h30c40 0 40 62 80 62h36" stroke="url(#down)"/>
-    <path d="M56 128h146" stroke="url(#mid)"/>
-  </g>
-  <circle cx="56" cy="128" r="17" fill="#ffffff"/>
-  <circle cx="56" cy="128" r="7" fill="#151b3a"/>
-  <g stroke-width="7" fill="#0b0f22">
-    <circle cx="202" cy="66" r="13" stroke="#34e3d0"/>
-    <circle cx="202" cy="128" r="13" stroke="#7c8cff"/>
-    <circle cx="202" cy="190" r="13" stroke="#ff7ab8"/>
+  <!-- the router of every network diagram: a disc, traffic in from the sides, out at the top and bottom -->
+  <circle cx="128" cy="128" r="90" fill="url(#disc)"/>
+  <circle cx="128" cy="128" r="90" fill="url(#shine)"/>
+  <g fill="none" stroke="#ffffff" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M62 128h38m-17-17 17 17-17 17"/>
+    <path d="M194 128h-38m17-17-17 17 17 17"/>
+    <path d="M128 104V64m-17 17 17-17 17 17"/>
+    <path d="M128 152v40m-17-17 17 17 17-17"/>
   </g>
 </svg>
