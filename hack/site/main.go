@@ -15,6 +15,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type schemaDoc struct {
@@ -173,6 +175,132 @@ func expectations(path string) []string {
 	return out
 }
 
+// referenceValues reads the reference example: for every kind, the fields of its first document
+// as YAML text, to fill the templates with values that mean something.
+func referenceValues() map[string]map[string]string {
+	out := map[string]map[string]string{}
+
+	raw, err := os.ReadFile("examples/reference/router.yaml")
+	if err != nil {
+		return out
+	}
+
+	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+
+	for {
+		var doc yaml.Node
+		if dec.Decode(&doc) != nil {
+			break
+		}
+
+		if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+			continue
+		}
+
+		m := doc.Content[0]
+		kind, fields := "", map[string]string{}
+
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			key, val := m.Content[i].Value, m.Content[i+1]
+			if key == "kind" {
+				kind = val.Value
+			}
+
+			stripComments(val)
+
+			var b strings.Builder
+
+			enc := yaml.NewEncoder(&b)
+			enc.SetIndent(2)
+			_ = enc.Encode(val)
+			_ = enc.Close()
+
+			fields[key] = strings.TrimRight(b.String(), "\n")
+		}
+
+		if _, seen := out[kind]; !seen {
+			out[kind] = fields
+		}
+	}
+
+	return out
+}
+
+func stripComments(n *yaml.Node) {
+	n.HeadComment, n.LineComment, n.FootComment = "", "", ""
+	for _, c := range n.Content {
+		stripComments(c)
+	}
+}
+
+// placeholder is the value of a field the reference example does not set.
+func placeholder(p property) string {
+	switch t := typeOf(p); {
+	case strings.HasPrefix(t, "list of"):
+		return "[]"
+	case t == "boolean":
+		return "false"
+	case t == "integer" || t == "number":
+		return "0"
+	case p.Ref != "":
+		return "{}"
+	case len(p.Enum) > 0:
+		return fmt.Sprint(p.Enum[0])
+	default:
+		return `""`
+	}
+}
+
+// template is a document ready to paste: required fields as they are, the others commented out
+// and marked optional, each with what it means.
+func template(kind string, def definition, fields []string, values map[string]string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "apiVersion: v1alpha1\nkind: %s\n", kind)
+
+	for _, f := range fields {
+		p := def.Properties[f]
+		required := slices.Contains(def.Required, f)
+
+		val, ok := values[f]
+		if !ok {
+			val = placeholder(p)
+		}
+
+		entry := f + ": " + val
+		if strings.Contains(val, "\n") || strings.HasPrefix(val, "- ") {
+			entry = f + ":\n  " + strings.ReplaceAll(val, "\n", "\n  ")
+		}
+
+		note := strings.Join(strings.Fields(p.Description), " ")
+		if !required {
+			note = strings.TrimSpace("optional: " + note)
+			entry = "# " + strings.ReplaceAll(entry, "\n", "\n# ")
+		}
+
+		if note != "" {
+			fmt.Fprintf(&b, "# %s\n", note)
+		}
+
+		b.WriteString(entry + "\n")
+	}
+
+	return b.String()
+}
+
+const script = `
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('button.copy');
+  if (!b) return;
+  var text = document.getElementById(b.dataset.from).textContent;
+  navigator.clipboard.writeText(text).then(function () {
+    var old = b.textContent;
+    b.textContent = 'Copied';
+    setTimeout(function () { b.textContent = old; }, 1500);
+  });
+});
+`
+
 const style = `
 :root { --bg:#fff; --fg:#1b1f24; --muted:#656d76; --line:#d8dee4; --code:#f6f8fa; --key:#0550ae; --accent:#0969da; --warn:#fff8c5; }
 @media (prefers-color-scheme: dark) {
@@ -200,6 +328,9 @@ pre code { background:none; padding:0; }
 details { margin:6px 0; } summary { cursor:pointer; padding:4px 0; }
 ul { margin:6px 0 12px; padding-left:22px; } li { margin:2px 0; }
 .req { color:#cf222e; font-size:12px; margin-left:4px; }
+.anchor { margin-left:8px; color:var(--muted); font-weight:normal; opacity:0; } h2:hover .anchor, h3:hover .anchor, .anchor:focus { opacity:1; }
+button.copy { font:13px/1 inherit; color:var(--fg); background:var(--code); border:1px solid var(--line); border-radius:6px; padding:6px 10px; margin-left:10px; cursor:pointer; vertical-align:middle; }
+button.copy:hover { border-color:var(--accent); color:var(--accent); }
 @media (max-width: 860px) { .layout { display:block; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } main { padding:24px 18px 60px; } td:first-child, td:nth-child(2) { white-space:normal; } }
 `
 
@@ -250,10 +381,10 @@ func main() {
 <p>A GitOps-managed router built on <a href="https://www.talos.dev">Talos Linux</a>: stock Talos runs the machine, and the
 <code>routald</code> system extension turns it into a router: zone firewall, NAT, port forwards, UPnP, DHCP, DNS with
 blocklists, IPv6 router advertisements and prefix delegation, PPPoE, NTP, mDNS.</p>
-<div class="warn"><strong>A toy experiment more than a product.</strong> Routal is a small project with few users:
-AI-generated code, written to try out an idea. It has only been tested in VMs and network namespaces, never on real
-hardware or with a real ISP. It is maintained, at its own pace: there is no release schedule and no promise of support.
-Do not put it in front of anything you care about.</div>
+<div class="warn"><strong>A toy experiment more than a product.</strong> Routal is AI-generated code, written to try out
+an idea. It has only been tested in VMs and network namespaces, never on real hardware or with a real ISP. It is
+maintained, at its own pace: there is no release schedule and no promise of support. Do not put it in front of anything
+you care about.</div>
 <p>Source, tests and design notes: <a href="https://github.com/j0n17/routal">github.com/j0n17/routal</a>.</p>
 
 <h2 id="layout">A router in git</h2>
@@ -273,14 +404,22 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 
 	section := func(id, title, intro string) {
 		fmt.Fprintf(&nav, `<h2>%s</h2>`, title)
-		fmt.Fprintf(&body, "<h2 id=%q>%s</h2>\n<p>%s</p>\n", id, title, intro)
+		fmt.Fprintf(&body, "<h2 id=%q>%s<a class=\"anchor\" href=\"#%s\" aria-label=\"Link to this section\">#</a></h2>\n<p>%s</p>\n", id, title, id, intro)
 	}
 
-	define := func(name string) {
+	values := referenceValues()
+
+	define := func(name string, document bool) {
 		def := sc.Definitions[name]
 
+		copyButton := ""
+		if document {
+			copyButton = fmt.Sprintf(`<button class="copy" data-from="tpl-%s" title="Copy a %s to the clipboard: required fields set, optional ones commented out">Copy YAML</button>`, name, name)
+		}
+
 		fmt.Fprintf(&nav, `<a href="#%s">%s</a>`, name, name)
-		fmt.Fprintf(&body, "<h3 id=%q><code>%s</code></h3>\n<p>%s</p>\n", name, name, html.EscapeString(def.Description))
+		fmt.Fprintf(&body, "<h3 id=%q><code>%s</code><a class=\"anchor\" href=\"#%s\" aria-label=\"Link to %s\">#</a>%s</h3>\n<p>%s</p>\n",
+			name, name, name, name, copyButton, html.EscapeString(def.Description))
 
 		var fields []string
 		for f := range def.Properties {
@@ -289,8 +428,12 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 			}
 		}
 
-		// required fields first, then by name
+		// the name first, then the required fields, then by name
 		sort.Slice(fields, func(i, j int) bool {
+			if (fields[i] == "name") != (fields[j] == "name") {
+				return fields[i] == "name"
+			}
+
 			ri, rj := slices.Contains(def.Required, fields[i]), slices.Contains(def.Required, fields[j])
 			if ri != rj {
 				return ri
@@ -298,6 +441,12 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 
 			return fields[i] < fields[j]
 		})
+
+		if document {
+			tpl := template(name, def, fields, values[name])
+			fmt.Fprintf(&body, "<details><summary>YAML template <span class=\"muted\">required fields set, optional ones commented out</span></summary><pre><code id=\"tpl-%s\">%s</code></pre></details>\n",
+				name, html.EscapeString(tpl))
+		}
 
 		if len(fields) == 0 {
 			return
@@ -322,13 +471,13 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 	section("documents", "Documents", "Every <code>kind</code> of <code>router.yaml</code>, with <code>apiVersion: v1alpha1</code>. Generated from the schema, which is generated from the code.")
 
 	for _, k := range kinds {
-		define(k)
+		define(k, true)
 	}
 
 	section("types", "Nested types", "What some fields of the documents above are made of.")
 
 	for _, k := range helpers {
-		define(k)
+		define(k, false)
 	}
 
 	section("examples", "Examples", "Complete routers from the repository. Each is validated by the tests with the real tools: nftables, Kea, Unbound, radvd, chrony, talosctl.")
@@ -339,7 +488,7 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 		src, _ := os.ReadFile(path)
 
 		fmt.Fprintf(&nav, `<a href="#example-%s">%s</a>`, name, name)
-		fmt.Fprintf(&body, "<h3 id=\"example-%s\"><code>%s</code></h3>\n<p>%s</p>\n", name, name, html.EscapeString(lead(string(src))))
+		fmt.Fprintf(&body, "<h3 id=\"example-%[1]s\"><code>%[1]s</code><a class=\"anchor\" href=\"#example-%[1]s\" aria-label=\"Link to this example\">#</a></h3>\n<p>%[2]s</p>\n", name, html.EscapeString(lead(string(src))))
 		file(&body, "router.yaml", path, name == "home-router")
 		file(&body, "talos.yaml", filepath.Join(dir, "talos.yaml"), false)
 	}
@@ -352,7 +501,7 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 		src, _ := os.ReadFile(path)
 
 		fmt.Fprintf(&nav, `<a href="#persona-%s">%s</a>`, name, name)
-		fmt.Fprintf(&body, "<h3 id=\"persona-%s\"><code>%s</code></h3>\n<p>%s</p>\n", name, name, html.EscapeString(lead(string(src))))
+		fmt.Fprintf(&body, "<h3 id=\"persona-%[1]s\"><code>%[1]s</code><a class=\"anchor\" href=\"#persona-%[1]s\" aria-label=\"Link to this persona\">#</a></h3>\n<p>%[2]s</p>\n", name, html.EscapeString(lead(string(src))))
 
 		if exp := expectations(filepath.Join(dir, "checks.sh")); len(exp) > 0 {
 			body.WriteString("<ul>\n")
@@ -373,8 +522,8 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 <meta name="description" content="Reference of router.yaml, example routers and tested personas of Routal, a router built on Talos Linux.">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 <style>%s</style></head>
-<body><div class="layout"><nav>%s</nav><main>%s</main></div></body></html>
-`, style, nav.String(), body.String())
+<body><div class="layout"><nav>%s</nav><main>%s</main></div><script>%s</script></body></html>
+`, style, nav.String(), body.String(), script)
 
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, err)

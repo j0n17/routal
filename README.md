@@ -3,11 +3,11 @@
 # Routal
 
 > [!WARNING]
-> **A toy experiment more than a product.** Routal is a small project with few users: AI-generated
-> code ("AI slop"), written to try out an idea, running a router on stock Talos Linux with a system
-> extension. It has only been tested in VMs and network namespaces, never on real hardware or with
-> a real ISP. It is maintained, at its own pace: there is no release schedule and no promise of
-> support. Do not put it in front of anything you care about.
+> **A toy experiment more than a product.** Routal is AI-generated code ("AI slop"), written to try
+> out an idea: running a router on stock Talos Linux with a system extension. It has only been
+> tested in VMs and network namespaces, never on real hardware or with a real ISP. It is
+> maintained, at its own pace: there is no release schedule and no promise of support. Do not put
+> it in front of anything you care about.
 
 A GitOps-managed router built on [Talos Linux](https://www.talos.dev): stock Talos runs the
 machine, and the `routald` system extension turns it into a router.
