@@ -18,7 +18,13 @@ got=$(ask "$ip" 8081)
 [ "$got" = second ] && pass "from outside: router:8081 reaches the web server" || fail "from outside: router:8081 answered '$got'"
 [ -z "$(ask "$ip" 8082)" ] && pass "from outside: a port that is not published stays closed" || fail "router:8082 is open"
 [ -z "$(ask "$ip" 53)" ] && pass "from outside: the router's DNS is closed" || fail "from outside: the router's DNS answers"
-got=$(askfrom "$remote" 192.168.50.10 8080)
+# After the router restarted, the laptop still holds the keys of the old session: WireGuard only
+# starts a new handshake some 15 s after traffic went unanswered.
+for _ in 1 2 3 4 5 6 7 8; do
+	got=$(askfrom "$remote" 192.168.50.10 8080)
+	[ "$got" = first ] && break
+	sleep 4
+done
 [ "$got" = first ] && pass "over the VPN: the laptop on the road reaches the NAS on its LAN address" || fail "over the VPN: the NAS answered '$got' ($(R wg show 2>&1 | grep -E 'handshake|transfer' | tr '\n' ' '))"
 got=$(askfrom "$remote" 192.168.50.11 8080)
 [ "$got" = second ] && pass "over the VPN: and the web server" || fail "over the VPN: the web server answered '$got'"
