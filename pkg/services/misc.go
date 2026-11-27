@@ -34,6 +34,9 @@ func radvd(cfg *config.Config, e env.Env) (string, []string) {
 		line("\tMinRtrAdvInterval 20;")
 		line("\tMaxRtrAdvInterval 60;")
 		line("\tAdvDefaultLifetime %d;", max(lifetime, 60))
+		// unspecified: hosts keep their own hop limit (64). With a value, radvd also writes it to the
+		// link's sysctl, which its account cannot do.
+		line("\tAdvCurHopLimit 0;")
 		line("\tAdvManagedFlag %s;", onoff[ra.Managed])
 		line("\tAdvOtherConfigFlag %s;", onoff[ra.Other])
 

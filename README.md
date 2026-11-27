@@ -172,6 +172,13 @@ drop the extension). Upgrade: `talosctl upgrade --image <installer>:<new tag>`, 
 `talosctl reboot` (in Kubernetes-free mode Talos does not reboot by itself). Use a new tag per
 build: Talos reuses an image it already pulled under the same tag.
 
+### Releases
+
+A tag `vX.Y.Z` publishes (`.github/workflows/release.yml`) the installer with the extension for
+every tested Talos version, amd64 and arm64, as
+`ghcr.io/<owner>/routal-installer:<X.Y.Z>-talos-<talos version>`, and the extension tarballs on a
+GitHub release. Supported Talos: 1.14 and later.
+
 ## Tests
 
 ```sh
@@ -189,13 +196,15 @@ GitHub Actions (`.github/workflows/ci.yml`) runs `make check`, `make integration
 FUZZTIME=30s` and builds the extension for amd64 and arm64 on every push and pull request.
 It also validates the examples and builds the installer for every Talos version listed by
 `hack/talos-versions.sh` (the one pinned in the Makefile, and the newest release of every minor
-from 1.15 on), on every push and every Monday. For one version locally:
+from 1.14 on), on every push and every Monday. For one version locally:
 `make check-talos installer TALOS_VERSION=v1.15.0-beta.0`.
 
 `make vm-test` boots that Talos with the extension in a VM (tart on an Apple silicon Mac; QEMU
 with KVM and sudo on Linux, which is what CI runs for every version), applies `test/vm`, and
 checks what only a real Talos shows: the extension starts, every daemon runs under its account
-with its capabilities, and the WAN side is closed. It removes the VM and the image when it ends.
+with its capabilities, and the WAN side is closed. On Linux the VM has a second NIC with a client
+behind it: DHCP lease, SLAAC, DNS over TLS with DNSSEC, and the Internet through the router.
+It removes the VM and the image when it ends.
 
 Both run the real routald and daemons with `examples/nas-vpn` and the same 90 checks
 (test/integration/checks.sh): DHCP, SLAAC, DNS, DNS blocking, the firewall in IPv4 and IPv6, NAT,

@@ -2,10 +2,10 @@
 # Prints the Talos versions to test as a JSON list: the one pinned in the Makefile, then the newest
 # release of every minor from MIN on (a stable release, else its newest pre-release), as published
 # on ghcr.io/siderolabs/talosctl.
-# Usage: hack/talos-versions.sh [min minor, default 1.15]
+# Usage: hack/talos-versions.sh [min minor, default 1.14]
 set -eu
 pinned=$(sed -n 's/^TALOS_VERSION *?= *//p' "$(dirname "$0")/../Makefile")
-exec python3 - "$pinned" "${1:-1.15}" <<'PY'
+exec python3 - "$pinned" "${1:-1.14}" <<'PY'
 import json, re, sys, urllib.request
 
 pinned, floor = sys.argv[1], tuple(int(x) for x in sys.argv[2].split("."))

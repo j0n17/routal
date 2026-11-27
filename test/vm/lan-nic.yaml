@@ -1,0 +1,15 @@
+---
+# lan0 on the VM's second NIC: the test's client is behind it
+apiVersion: v1alpha1
+kind: LinkAliasConfig
+name: lan0
+selector:
+  match: mac(link.permanent_addr) == "$LANMAC"
+---
+apiVersion: v1alpha1
+kind: LinkConfig
+name: lan0
+up: true
+addresses:
+  - address: 192.168.50.1/24
+  - address: fd00:50::1/64

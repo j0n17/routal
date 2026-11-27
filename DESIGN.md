@@ -3,7 +3,7 @@
 ## Decisions
 | Topic | Decision |
 |---|---|
-| Base | **Stock Talos Linux** (>= 1.15, Kubernetes-free mode `--skip-k8s-etcd`), not a fork. The fork (kept locally, unpublished) was dropped on 2026-11-13: same result for a router, without carrying 2000 files of merge conflicts. |
+| Base | **Stock Talos Linux** (>= 1.14, Kubernetes-free mode `--skip-k8s-etcd`), not a fork. The fork (kept locally, unpublished) was dropped on 2026-11-13: same result for a router, without carrying 2000 files of merge conflicts. |
 | Router logic | `routald`, a Talos **system extension** (baked into the image, starts at boot without network, versioned with the OS and rolled back with it). |
 | Plugins | Talos `ContainerConfig` declarative containers (UI, adblock, monitoring...), pulled at runtime. |
 | Config | Talos documents for the machine + Routal documents (`router.yaml`), delivered through `ExtensionServiceConfig`. |
@@ -320,8 +320,8 @@ container having all capabilities, as it does for nftables today.
   (e.g. Unbound 0x400, Avahi 0); routald stays root.
 - From the WAN side: ping answers, tcp 50000 opens (a `to: self` rule with `sourceSubnets`), 53 and
   an unused port do not.
-- v1.14.7 behaves the same, with the manifest's `>= v1.15.0-alpha.0` constraint lifted for the test:
-  the constraint is what keeps 1.14 out, not a missing feature this test exercises.
+- v1.14.7 behaves the same. The manifest required 1.15 until then, for no feature that 1.14 lacks:
+  it now accepts `>= v1.14.0`, and CI boots the newest 1.14 too.
 - The VM disk needs about 6 GB: with 3 GB, EPHEMERAL has no room and `/var/lib` never appears.
 - Not checked there: DNS answers and DHCP leases (no client behind a dummy link).
 - Scripted since as `make vm-test` (hack/vm-test.sh, test/vm): 13 checks.

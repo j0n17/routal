@@ -1,0 +1,9 @@
+---
+# lan0 without a second NIC: enough for the daemons to start and listen, no client behind it
+apiVersion: v1alpha1
+kind: DummyLinkConfig
+name: lan0
+up: true
+addresses:
+  - address: 192.168.50.1/24
+  - address: fd00:50::1/64

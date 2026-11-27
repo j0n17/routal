@@ -1,5 +1,6 @@
-# Talos side of the VM boot test (hack/vm-test.sh): the VM's one NIC is the WAN, two dummy links
-# stand for LANs so that every daemon has something to listen on.
+# Talos side of the VM boot test (hack/vm-test.sh): the VM's first NIC is the WAN. lan0 comes from
+# lan-nic.yaml (QEMU: a second NIC with a client behind it) or lan-dummy.yaml (tart has one NIC);
+# iot0 is a dummy link, the second link the mDNS reflector needs.
 apiVersion: v1alpha1
 kind: HostnameConfig
 auto: "off"
@@ -19,14 +20,6 @@ selector:
 apiVersion: v1alpha1
 kind: DHCPv4Config
 name: wan0
----
-apiVersion: v1alpha1
-kind: DummyLinkConfig
-name: lan0
-up: true
-addresses:
-  - address: 192.168.50.1/24
-  - address: fd00:50::1/64
 ---
 apiVersion: v1alpha1
 kind: DummyLinkConfig

@@ -2,7 +2,8 @@
 # Boots the Talos image with the extension (make image) in a VM, applies test/vm, and checks what
 # only a real Talos shows: the extension starts, every daemon runs under its account with its
 # capabilities, and the WAN side is closed. On macOS (Apple silicon) the VM is a tart VM; on Linux
-# it is QEMU with KVM on a tap device, with dnsmasq as the ISP (needs sudo; this is what CI runs).
+# it is QEMU with KVM, with dnsmasq as the ISP and a client behind the router's second NIC (needs
+# sudo; this is what CI runs).
 # The VM, its disk and the image are removed at the end (KEEP=1 keeps the VM and says how to reach it).
 # Usage: hack/vm-test.sh <talos version> <out dir> <arch>      (make vm-test)
 set -eu
@@ -13,7 +14,7 @@ image=$out/metal-$arch.raw
 
 case $(uname -s) in
 Darwin) backend=tart tools="tart talosctl docker nc ping" ;;
-*) backend=qemu tools="docker nc ping sudo dnsmasq ip iptables qemu-system-x86_64" ;;
+*) backend=qemu tools="docker nc ping sudo dnsmasq ip iptables qemu-system-x86_64 busybox dig" ;;
 esac
 for tool in $tools; do
 	command -v "$tool" >/dev/null || { echo "vm-test needs $tool"; exit 1; }
@@ -41,9 +42,11 @@ tart_stop() {
 }
 
 # --- QEMU (Linux): a bridge with dnsmasq and NAT plays the ISP, this host is the WAN side
+# The VM's second NIC is the LAN: a bridge with one client on it, a network namespace of this host.
 bridge=br-routal tap=tap-routal net=192.168.212
+lanbridge=br-routal-lan lantap=tap-routal-lan client=routal-client
 qemu_start() {
-	mac=52:54:00:d4:00:32 ip=$net.50
+	mac=52:54:00:d4:00:32 lanmac=52:54:00:d4:00:33 ip=$net.50
 	cp "$image" "$work/disk.img"
 	truncate -s "${disk_gb}G" "$work/disk.img"
 	sudo ip link add "$bridge" type bridge
@@ -51,6 +54,18 @@ qemu_start() {
 	sudo ip link set "$bridge" up
 	sudo ip tuntap add "$tap" mode tap
 	sudo ip link set "$tap" master "$bridge" up
+	sudo ip link add "$lanbridge" type bridge
+	sudo ip link set "$lanbridge" up
+	sudo ip tuntap add "$lantap" mode tap
+	sudo ip link set "$lantap" master "$lanbridge" up
+	sudo ip netns add "$client"
+	sudo ip link add veth-routal type veth peer name lan0 netns "$client"
+	sudo ip link set veth-routal master "$lanbridge" up
+	sudo ip netns exec "$client" ip link set lo up
+	sudo ip netns exec "$client" ip link set lan0 up
+	# Docker's FORWARD policy is drop, and bridged frames go through it when br_netfilter is loaded
+	sudo iptables -I FORWARD -i "$lanbridge" -j ACCEPT
+	sudo ip6tables -I FORWARD -i "$lanbridge" -j ACCEPT 2>/dev/null || true
 	sudo sysctl -q -w net.ipv4.ip_forward=1
 	sudo iptables -t nat -I POSTROUTING -s "$net.0/24" ! -o "$bridge" -j MASQUERADE
 	sudo iptables -I FORWARD -i "$bridge" -j ACCEPT
@@ -70,6 +85,7 @@ qemu_start() {
 		-drive if=pflash,format=raw,readonly=on,file="$firmware" \
 		-drive if=virtio,format=raw,file="$work/disk.img" \
 		-netdev tap,id=n0,ifname="$tap",script=no,downscript=no -device virtio-net-pci,netdev=n0,mac="$mac" \
+		-netdev tap,id=n1,ifname="$lantap",script=no,downscript=no -device virtio-net-pci,netdev=n1,mac="$lanmac" \
 		-display none -serial file:"$work/console.log" -daemonize -pidfile "$work/qemu.pid"
 }
 qemu_stop() {
@@ -79,6 +95,12 @@ qemu_stop() {
 	sudo iptables -t nat -D POSTROUTING -s "$net.0/24" ! -o "$bridge" -j MASQUERADE 2>/dev/null || true
 	sudo iptables -D FORWARD -i "$bridge" -j ACCEPT 2>/dev/null || true
 	sudo iptables -D FORWARD -o "$bridge" -j ACCEPT 2>/dev/null || true
+	sudo iptables -D FORWARD -i "$lanbridge" -j ACCEPT 2>/dev/null || true
+	sudo ip6tables -D FORWARD -i "$lanbridge" -j ACCEPT 2>/dev/null || true
+	sudo ip netns del "$client" 2>/dev/null || true
+	sudo ip link del veth-routal 2>/dev/null || true
+	sudo ip link del "$lantap" 2>/dev/null || true
+	sudo ip link del "$lanbridge" 2>/dev/null || true
 	sudo ip link del "$tap" 2>/dev/null || true
 	sudo ip link del "$bridge" 2>/dev/null || true
 }
@@ -117,7 +139,9 @@ subnet=${ip%.*}.0/24
 echo "   $ip ($mac)"
 
 echo "== config"
-sed -e "s|\$MAC|$mac|" -e "s|\$SUBNET|$subnet|" test/vm/talos.yaml >"$work/talos.yaml"
+lan=test/vm/lan-dummy.yaml
+if [ "$backend" = qemu ]; then lan=test/vm/lan-nic.yaml; fi
+cat test/vm/talos.yaml "$lan" | sed -e "s|\$MAC|$mac|" -e "s|\$LANMAC|${lanmac:-}|" -e "s|\$SUBNET|$subnet|" >"$work/talos.yaml"
 sed -e "s|\$SUBNET|$subnet|" test/vm/router.yaml >"$work/router.yaml"
 docker run --rm -v "$PWD":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src golang:1.26 sh -c "
 	go build -buildvcs=false -o /tmp/routald ./cmd/routald &&
@@ -153,7 +177,7 @@ T version 2>/dev/null | grep -q "Tag: *$version" && pass "Talos $version answers
 T services 2>/dev/null | grep -q 'ext-routald *Running' && pass "ext-routald is running" || fail "ext-routald: $(T services 2>&1 | grep routald)"
 T logs ext-routald >"$work/routald.log" 2>&1 || true
 grep -q 'applied: forwarding' "$work/routald.log" && pass "routald applied its ruleset" || fail "no ruleset applied: $(tail -3 "$work/routald.log")"
-denied=$(grep -E 'Permission denied|config rejected|keeps exiting' "$work/routald.log" | grep -v CurHopLimit | head -3 || true)
+denied=$(grep -E 'Permission denied|config rejected|keeps exiting' "$work/routald.log" | head -3 || true)
 [ -z "$denied" ] && pass "no daemon was denied a file, rejected its config or kept exiting" || fail "daemons in trouble: $denied"
 
 T processes >"$work/processes.txt" 2>/dev/null || true
@@ -176,6 +200,41 @@ pings && pass "WAN side: ping answers" || fail "WAN side: no ping"
 for port in 53 60123; do
 	closed "$port" && pass "WAN side: tcp $port is closed" || fail "WAN side: tcp $port is open"
 done
+
+if [ "$backend" = qemu ]; then
+	echo "== a client behind the router (network namespace on the LAN bridge)"
+	C() { sudo ip netns exec "$client" "$@"; }
+	cat >"$work/udhcpc.sh" <<'SCRIPT'
+#!/bin/sh
+# udhcpc event script: configures the lease and records it
+[ "$1" = bound ] || exit 0
+ip addr add "$ip/${mask:-24}" dev "$interface"
+ip route add default via "$router"
+echo "ip=$ip router=$router dns=$dns domain=$domain ntp=$ntpsrv" >"$(dirname "$0")/lease"
+SCRIPT
+	chmod +x "$work/udhcpc.sh"
+	C busybox udhcpc -i lan0 -n -q -t 8 -T 2 -O ntpsrv -O domain -s "$PWD/$work/udhcpc.sh" >"$work/udhcpc.log" 2>&1 || true
+	lease=$(cat "$work/lease" 2>/dev/null || true)
+	case $lease in
+	"ip=192.168.50.1"[0-9][0-9]" router=192.168.50.1 dns=192.168.50.1 domain=home.arpa ntp=192.168.50.1") pass "DHCP lease from Kea: $lease" ;;
+	*) fail "DHCP lease: '$lease' $(tail -2 "$work/udhcpc.log" | tr '\n' ' ')" ;;
+	esac
+	slaac=
+	for _ in $(seq 1 30); do
+		slaac=$(C ip -6 -o addr show dev lan0 scope global | awk '{ print $4 }' | grep '^fd00:50:' || true)
+		[ -n "$slaac" ] && break
+		sleep 2
+	done
+	[ -n "$slaac" ] && pass "SLAAC address from radvd: $slaac" || fail "no SLAAC address: $(C ip -6 -o addr show dev lan0)"
+	D() { C dig +time=5 +tries=2 @192.168.50.1 "$@"; }
+	answer=$(D +short example.com A | head -1)
+	[ -n "$answer" ] && pass "DNS through Unbound (DNS over TLS upstream): example.com -> $answer" || fail "DNS: $(D example.com A | tail -5 | tr '\n' ' ')"
+	D +dnssec example.com A | grep -q 'flags:[^;]* ad[ ;]' && pass "DNSSEC: a signed name is validated (ad)" || fail "DNSSEC: no ad flag: $(D +dnssec example.com A | grep flags)"
+	D dnssec-failed.org A | grep -q 'status: SERVFAIL' && pass "DNSSEC: a name with a broken signature is refused" || fail "DNSSEC: dnssec-failed.org: $(D dnssec-failed.org A | grep status)"
+	C nc -z -w 8 1.1.1.1 443 >/dev/null 2>&1 && pass "client -> Internet through the router (masquerade)" || fail "client cannot reach 1.1.1.1:443 through the router"
+	C nc -z -w 3 192.168.50.1 53 >/dev/null 2>&1 && pass "LAN side: tcp 53 is open" || fail "LAN side: tcp 53 is closed"
+	C nc -z -w 3 192.168.50.1 50000 >/dev/null 2>&1 && fail "LAN side: the Talos API is open (no rule opens it there)" || pass "LAN side: the Talos API is closed (no rule opens it there)"
+fi
 
 echo "== $passes passed, $fails failed"
 [ "$fails" = 0 ] || {

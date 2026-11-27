@@ -1,0 +1,90 @@
+# A tag vX.Y.Z publishes what a router installs from: the Talos installer image with the routald
+# extension, for amd64 and arm64, on ghcr.io, and the extension tarballs on a GitHub release.
+#
+#   ghcr.io/<owner>/routal-installer:<X.Y.Z>-talos-<talos version>     (both architectures)
+#
+# Talos reuses an installer it already pulled under the same tag: every release has its own.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write # the GitHub release
+  packages: write # ghcr.io
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  versions:
+    name: Talos versions to build for
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v5
+      # the same list CI boots: the pinned version and the newest release of every supported minor
+      - id: list
+        run: echo "versions=$(hack/talos-versions.sh)" >> "$GITHUB_OUTPUT"
+
+  installer:
+    name: Installer ${{ matrix.talos }} (${{ matrix.arch }})
+    needs: versions
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        talos: ${{ fromJSON(needs.versions.outputs.versions) }}
+        arch: [amd64, arm64]
+    env:
+      ARCH: ${{ matrix.arch }}
+      TALOS_VERSION: ${{ matrix.talos }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Names
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/routal-installer:${GITHUB_REF_NAME#v}-talos-${TALOS_VERSION}" >> "$GITHUB_ENV"
+      - run: make installer
+      - name: Push
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          make push-installer IMAGE="$IMAGE-$ARCH"
+      # the extension itself does not depend on the Talos version: one tarball per architecture
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-${{ matrix.arch }}-${{ matrix.talos }}
+          path: _out/routald-${{ matrix.arch }}.tar
+
+  publish:
+    name: Multi-architecture tags and the release
+    needs: [versions, installer]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: One tag for both architectures
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for talos in $(echo '${{ needs.versions.outputs.versions }}' | jq -r '.[]'); do
+            image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/routal-installer:${GITHUB_REF_NAME#v}-talos-$talos"
+            docker buildx imagetools create -t "$image" "$image-amd64" "$image-arm64"
+            echo "- \`$image\`" >> images.md
+          done
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          first=$(echo '${{ needs.versions.outputs.versions }}' | jq -r '.[0]')
+          for arch in amd64 arm64; do cp "artifacts/extension-$arch-$first/routald-$arch.tar" "routald-${GITHUB_REF_NAME#v}-$arch.tar"; done
+          { echo "Talos installer images with the routald extension (amd64 and arm64):"; echo; cat images.md; echo
+            echo "Upgrade a router with \`talosctl upgrade --image <one of them>\`, then \`talosctl reboot\`."
+            echo "The attached tarballs are the extension alone, for your own imager profile."; } > notes.md
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md routald-*.tar

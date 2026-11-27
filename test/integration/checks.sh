@@ -230,9 +230,8 @@ owners=$(for p in $kids; do echo "$(cat "/proc/$p/comm")=$(stat -c %U "/proc/$p"
 upid=$(for p in $kids; do [ "$(cat "/proc/$p/comm")" = unbound ] && echo "$p"; done | head -1)
 caps=$(sed -n 's/^CapEff:[[:space:]]*//p' "/proc/$upid/status")
 [ "$caps" = 0000000000000400 ] && pass "unbound only keeps CAP_NET_BIND_SERVICE" || fail "unbound capabilities: $caps (pid $upid)"
-# with Talos' modes on routald's directories (see where it starts), no daemon was refused a file;
-# radvd's hop limit sysctl is the one thing an account cannot write, and RAs carry it anyway
-denied=$(nsx router grep -a -E 'Permission denied|config rejected' /tmp/routald.log | grep -v CurHopLimit | head -3)
+# with Talos' modes on routald's directories (see where it starts), no daemon was refused a file
+denied=$(nsx router grep -a -E 'Permission denied|config rejected' /tmp/routald.log | head -3)
 [ -z "$denied" ] && pass "no daemon was denied a file or had its config rejected" || fail "daemons denied: $denied"
 # listeners on the router itself: one inside the UPnP mapping range, one on the Talos API port
 serve router 30000 router-high
