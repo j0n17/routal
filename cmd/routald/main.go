@@ -36,7 +36,7 @@ func main() {
 }
 
 func usage() error {
-	return fmt.Errorf("usage: routald run|validate|render|render-services|talos-patch|talos-render|schema|addr [args]")
+	return fmt.Errorf("usage: routald run|status|validate|render|render-services|talos-patch|talos-render|schema|addr [args]")
 }
 
 func run(args []string) error {
@@ -68,6 +68,10 @@ func run(args []string) error {
 			pd:         &pdManager{stateDir: dirs.State},
 			blocker:    &blocker{ctl: "/usr/sbin/unbound-control", dirs: dirs},
 		}).run(ctx)
+	}
+
+	if cmd == "status" {
+		return statusCommand(args)
 	}
 
 	if cmd == "addr" {

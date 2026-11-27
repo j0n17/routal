@@ -117,7 +117,7 @@ jobs:
     name: Talos ${{ matrix.talos }}
     needs: talos-versions
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 100
     strategy:
       fail-fast: false
       matrix:
@@ -135,9 +135,9 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q qemu-system-x86 ovmf dnsmasq-base netcat-openbsd busybox-static bind9-dnsutils socat miniupnpc wireguard-tools nmap
-          sudo modprobe wireguard
-      # every version plays the personas; the newest one also gets the port scans and the life cycle
-      # (reboot, WAN outage, lockout and rollback)
+          sudo modprobe -a wireguard xfs macvlan
+      # every version plays the personas; the newest one also gets the port scans, the life cycle
+      # (reboot, WAN outage) and test/vm/advanced.sh: boots in bad conditions, safe apply, exhaustion
       - name: Boot test
         env:
           ADVANCED: ${{ matrix.talos == needs.talos-versions.outputs.latest && '1' || '' }}
@@ -159,10 +159,22 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q qemu-system-x86 ovmf dnsmasq-base netcat-openbsd busybox-static bind9-dnsutils socat miniupnpc wireguard-tools nmap
-          sudo modprobe wireguard
+          sudo modprobe -a wireguard xfs macvlan
       # boots the older build with the homelab's config and leases, upgrades it to this one with
       # talosctl upgrade, and checks that the new build runs and kept the state
       - run: make vm-upgrade-test TALOS_VERSION=${{ needs.talos-versions.outputs.latest }} 2>&1 | tee ci.log
       - name: Failure summary
         if: failure()
         run: hack/ci-summary.sh ci.log
+
+  mutation:
+    name: Mutation testing (weekly)
+    # slow, and a report rather than a gate: which deliberate bugs the test suite does not notice
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          make mutation 2>&1 | tee mutation.log
+          { echo '```'; grep -E '^==|Killed|efficacy|LIVED' mutation.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

@@ -265,15 +265,22 @@ func zoneChain(zone string) string { return "from_" + zone }
 // zone only, so a packet is only ever checked against the rules of its own zone.
 func (r renderer) zoneChains(b *strings.Builder) {
 	for _, zone := range r.cfg.Zones {
-		var rules strings.Builder
+		var (
+			rules strings.Builder
+			any   bool
+		)
 
 		for _, rule := range r.cfg.Rules {
 			if rule.From == zone.Name && rule.To != config.SelfZone {
+				any = true
+
 				r.forwardRule(&rules, rule)
 			}
 		}
 
-		if rules.Len() > 0 {
+		// The forward chain jumps here as soon as the zone has a rule, even one that renders to
+		// nothing (IPv4 sources with IPv6 destinations can never match): the chain must exist.
+		if any {
 			fmt.Fprintf(b, "\tchain %s {\n%s\t}\n", zoneChain(zone.Name), rules.String())
 		}
 	}

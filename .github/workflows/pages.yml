@@ -1,0 +1,36 @@
+# Publishes the project's web page (make site) with GitHub Pages: the reference of router.yaml,
+# the example routers and the personas. Needs Pages enabled on the repository, with
+# "GitHub Actions" as the source (Settings > Pages).
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths: [pkg/schema/**, examples/**, test/vm/personas/**, hack/site/**, .github/workflows/pages.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - run: make site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _out/site
+      - id: deploy
+        uses: actions/deploy-pages@v4

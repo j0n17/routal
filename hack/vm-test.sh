@@ -5,8 +5,8 @@
 # it is QEMU with KVM, with dnsmasq as the ISP and a client behind the router's second NIC (needs
 # sudo; this is what CI runs). There it then plays the personas of test/vm/personas, each with its
 # own router.yaml and what that user expects to work, or not to. With ADVANCED=1 it also scans every
-# port from outside after each persona, then takes the homelab through a reboot, a WAN outage and a
-# config that locks the admin out.
+# port from outside after each persona, takes the homelab through a reboot and a WAN outage, then
+# runs test/vm/advanced.sh: boots in bad conditions, the safe apply, and exhaustion.
 # The VM, its disk and the image are removed at the end (KEEP=1 keeps the VM and says how to reach it).
 # Usage: hack/vm-test.sh <talos version> <out dir> <arch>      (make vm-test)
 set -eu
@@ -93,21 +93,7 @@ qemu_start() {
 	sudo dnsmasq --interface="$bridge" --bind-interfaces --except-interface=lo --port=0 \
 		--dhcp-range="$net.50,$net.60,1h" --dhcp-host="$mac,$ip" --dhcp-option=6,1.1.1.1,9.9.9.9 \
 		--dhcp-leasefile="$PWD/$work/dnsmasq.leases" --pid-file="$PWD/$work/dnsmasq.pid"
-	firmware=
-	for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do
-		if [ -f "$f" ]; then firmware=$f; break; fi
-	done
-	[ -n "$firmware" ] || { echo "no OVMF firmware found (apt install ovmf)"; exit 1; }
-	accel="-accel tcg -cpu max"
-	if [ -e /dev/kvm ]; then accel="-accel kvm -cpu host"; fi
-	# shellcheck disable=SC2086
-	sudo qemu-system-x86_64 $accel -machine q35 -m 2048 -smp 2 \
-		-drive if=pflash,format=raw,readonly=on,file="$firmware" \
-		-drive if=virtio,format=raw,file="$work/disk.img" \
-		-netdev tap,id=n0,ifname="$tap",script=no,downscript=no -device virtio-net-pci,netdev=n0,mac="$mac" \
-		-netdev tap,id=n1,ifname="$lantap",script=no,downscript=no -device virtio-net-pci,netdev=n1,mac="$lanmac" \
-		-monitor unix:"$work/monitor.sock",server,nowait \
-		-display none -serial file:"$work/console.log" -daemonize -pidfile "$work/qemu.pid"
+	qemu_boot
 	# this host is on the WAN side: what it sends to the LANs goes to the router, as from the Internet
 	sudo ip route add 192.168.50.0/24 via "$ip"
 	sudo ip route add 192.168.60.0/24 via "$ip"
@@ -122,6 +108,44 @@ qemu_start() {
 	sudo ip netns exec "$remote" ip link set wg-routal up
 	sudo ip netns exec "$remote" ip route add 192.168.50.0/24 dev wg-routal
 }
+# qemu_boot [qemu options]: starts the VM on its disk; qemu_halt cuts its power
+qemu_boot() {
+	firmware=
+	for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do
+		if [ -f "$f" ]; then firmware=$f; break; fi
+	done
+	[ -n "$firmware" ] || { echo "no OVMF firmware found (apt install ovmf)"; exit 1; }
+	accel="-accel tcg -cpu max"
+	if [ -e /dev/kvm ]; then accel="-accel kvm -cpu host"; fi
+	# shellcheck disable=SC2086
+	sudo qemu-system-x86_64 $accel -machine q35 -m 2048 -smp 2 \
+		-drive if=pflash,format=raw,readonly=on,file="$firmware" \
+		-drive if=virtio,format=raw,file="$work/disk.img" \
+		-netdev tap,id=n0,ifname="$tap",script=no,downscript=no -device virtio-net-pci,netdev=n0,mac="$mac" \
+		-netdev tap,id=n1,ifname="$lantap",script=no,downscript=no -device virtio-net-pci,netdev=n1,mac="$lanmac" \
+		-monitor unix:"$work/monitor.sock",server,nowait \
+		-display none -serial file:"$work/console.log" -daemonize -pidfile "$work/qemu.pid" "$@"
+}
+qemu_halt() {
+	if [ -f "$work/qemu.pid" ]; then sudo kill -9 "$(sudo cat "$work/qemu.pid")" 2>/dev/null || true; fi
+	sudo rm -f "$work/qemu.pid" "$work/monitor.sock"
+	sleep 2
+}
+# wan_link <on|off>: the carrier of the VM's WAN NIC
+wan_link() { echo "set_link n0 $1" | sudo socat - "UNIX-CONNECT:$work/monitor.sock" >/dev/null 2>&1 || true; }
+# with_var <command>: runs it with the router's /var (the EPHEMERAL partition) mounted on $work/var,
+# while the VM is off
+with_var() {
+	loop=$(sudo losetup -fP --show "$work/disk.img")
+	sleep 1
+	part=$(lsblk -lno NAME,PARTLABEL "$loop" | awk '$2 == "EPHEMERAL" { print $1 }')
+	mkdir -p "$work/var"
+	sudo mount "/dev/$part" "$work/var"
+	"$@" || true
+	sudo umount "$work/var"
+	sudo losetup -d "$loop"
+}
+
 qemu_stop() {
 	for pidfile in "$work/qemu.pid" "$work/dnsmasq.pid"; do
 		if [ -f "$pidfile" ]; then sudo kill "$(sudo cat "$pidfile")" 2>/dev/null || true; fi
@@ -135,6 +159,7 @@ qemu_stop() {
 		sudo ip netns pids "$ns" 2>/dev/null | xargs -r sudo kill 2>/dev/null || true
 		sudo ip netns del "$ns" 2>/dev/null || true
 	done
+	sudo umount "$work/var" 2>/dev/null || true
 	sudo ip link del veth-routal-g 2>/dev/null || true
 	sudo ip link del veth-routal 2>/dev/null || true
 	sudo ip link del "$lantap" 2>/dev/null || true
@@ -240,6 +265,11 @@ pings && pass "WAN side: ping answers" || fail "WAN side: no ping"
 for port in 53 60123; do
 	closed "$port" && pass "WAN side: tcp $port is closed" || fail "WAN side: tcp $port is open"
 done
+
+# routald's own health report, read through the Talos API and judged by `routald status`
+routald_cli() { docker run --rm -v "$PWD":"$PWD" -w "$PWD" golang:1.26 "$PWD/$work/routald" "$@"; }
+healthy() { T read /run/routal/routal/status.json >"$work/status.json" 2>/dev/null && routald_cli status "$work/status.json" >"$work/status.txt" 2>&1; }
+healthy && pass "routald reports healthy: $(grep -c ' running ' "$work/status.txt") daemons running" || fail "routald's status: $(tr '\n' ' ' <"$work/status.txt" | cut -c1-300)"
 
 if [ "$backend" = qemu ]; then
 	echo "== a client behind the router (network namespace on the LAN bridge)"
@@ -412,13 +442,13 @@ SCRIPT
 		. "$homelab/checks.sh"
 
 		# the ISP's link goes down for 20 s (QEMU takes the carrier away), then comes back
-		echo "set_link n0 off" | sudo socat - "UNIX-CONNECT:$work/monitor.sock" >/dev/null 2>&1 || true
+		wan_link off
 		sleep 5
 		C nc -z -w 4 1.1.1.1 443 >/dev/null 2>&1 && fail "during the outage: the Internet is still reachable (the link was not cut)" || pass "during a WAN outage: no Internet, as expected"
 		answer=$(D +short nas.home.arpa A | head -1)
 		[ "$answer" = 192.168.50.10 ] && pass "during a WAN outage: local names still resolve" || fail "during a WAN outage: nas.home.arpa -> '$answer'"
 		sleep 15
-		echo "set_link n0 on" | sudo socat - "UNIX-CONNECT:$work/monitor.sock" >/dev/null 2>&1 || true
+		wan_link on
 		for _ in $(seq 1 30); do T version >/dev/null 2>&1 && break; sleep 3; done
 		sleep 10
 		T logs ext-routald >"$work/routald.log" 2>&1 || true
@@ -426,29 +456,8 @@ SCRIPT
 		# shellcheck disable=SC1090
 		. "$homelab/checks.sh"
 
-		# a config without the rule that lets the admin in, applied the safe way: Talos takes it back
-		grep -v '^#' test/vm/personas/01-family/router.yaml | awk 'BEGIN { RS = "---\n"; ORS = "---\n" } !/admin-from-host/' >"$work/lockout.yaml"
-		if apply "$work/lockout.yaml" --mode try --timeout 60s; then
-			locked=
-			for _ in $(seq 1 15); do
-				if closed 50000; then locked=1; break; fi
-				sleep 2
-			done
-			[ -n "$locked" ] && pass "a config that locks the admin out, applied with --mode try: the Talos API is cut" || fail "the lockout config did not close the Talos API"
-			back=
-			for _ in $(seq 1 40); do
-				if T version >/dev/null 2>&1; then back=1; break; fi
-				sleep 4
-			done
-			[ -n "$back" ] && pass "Talos took the config back on its own: the API answers again" || fail "the Talos API did not come back after the try timeout"
-			sleep 20
-			T logs ext-routald >"$work/routald.log" 2>&1 || true
-			echo "   after the rollback, the homelab again:"
-			# shellcheck disable=SC1090
-			. "$homelab/checks.sh"
-		else
-			fail "the lockout config was not applied: $(tail -2 "$work/patch.log" | tr '\n' ' ')"
-		fi
+		# shellcheck disable=SC1091
+		. test/vm/advanced.sh
 	fi
 fi
 

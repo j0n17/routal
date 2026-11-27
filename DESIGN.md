@@ -106,7 +106,7 @@ the LAN only. Both use the unmodified `examples/home-router` files; the MACs mat
 ## Network namespace and containerlab tests (`make integration`, `make clab`)
 Router, two LAN clients, a NAS on VLAN 30, a WAN host and a WireGuard peer, each in its own network
 namespace in one privileged container; the router runs routald with `examples/nas-vpn` plus a port
-forward and UPnP. 90 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
+forward and UPnP. 91 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
 dynamic names, reverse, forwarding), the NAS matrix in IPv4 and IPv6, masquerade, port forward,
 reflection, UPnP mapping and secure mode, NTP, mDNS across the VLAN. Talos itself is emulated
 (links, addresses, aliases); its ingress firewall is not.
@@ -313,6 +313,19 @@ Checked: the lab (accounts and capabilities read from /proc, the three listeners
 the rendered Unbound config against Quad9 and Cloudflare (a signed name has the `ad` flag,
 dnssec-failed.org is SERVFAIL). Not checked on a Talos VM yet: the accounts rely on the extension
 container having all capabilities, as it does for nftables today.
+
+## Found by the tests (2026-11-27)
+Each line is a bug no hand-written test had caught, and the test that found it.
+- Daemons could not read their files on Talos (mount sources are 0700 root): the first VM boot.
+- Kea subnet ids depended on the order of the DHCP servers in router.yaml, so adding a guest
+  network orphaned the leases of the LAN: the personas, played one after the other on one router.
+- A rule whose sources and destinations share no address family rendered to nothing while the
+  forward chain still jumped to its zone's chain, and nft refused the whole ruleset: the firewall
+  model test, on its first run with IPv6.
+- `prefixLength: 65` made the validation panic (a negative shift) instead of reporting an error,
+  and a /32 was always refused (a 32-bit overflow): the boundary tests written after mutation
+  testing showed no limit of the validation was pinned.
+- routald says nothing useful when unhealthy: now a status report (`routald status`) and a log line.
 
 ## Verified (2026-11-27, tart VM, arm64, Talos v1.15.0-beta.0 and v1.14.7)
 - One NIC as the WAN, two dummy links as LANs, `ingress: block`. Kea, Unbound (DNSSEC, DNS over TLS),

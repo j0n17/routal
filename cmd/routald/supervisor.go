@@ -27,6 +27,8 @@ type supervisor struct {
 	dirs  services.Dirs
 	procs map[string]*proc
 	warns map[string]string
+	// wanted are the services of the last reconcile, in config order (for the status report)
+	wanted []string
 }
 
 // restart delays after an exit: doubled after each exit within a minute of the start
@@ -97,9 +99,11 @@ func (s *supervisor) reconcile(svcs []services.Service) error {
 	var errs []error
 
 	want := map[string]bool{}
+	s.wanted = s.wanted[:0]
 
 	for _, svc := range svcs {
 		want[svc.Name] = true
+		s.wanted = append(s.wanted, svc.Name)
 
 		if w := strings.Join(svc.Warnings, "; "); w != s.warns[svc.Name] {
 			s.warns[svc.Name] = w
@@ -149,7 +153,19 @@ func (s *supervisor) start(svc services.Service) error {
 	path := filepath.Join(s.dirs.State, svc.File)
 	old := s.procs[svc.Name]
 
-	if old == nil || old.svc.Config != svc.Config {
+	// After a restart the file of the last run is usually the one to write: it is then left alone,
+	// so that a full disk does not keep a daemon from starting with a config that is already there.
+	unchanged := false
+
+	if cur, err := os.ReadFile(path); old == nil && err == nil && string(cur) == svc.Config {
+		unchanged = true
+
+		if cred != nil {
+			_ = errors.Join(os.Chown(path, 0, int(cred.Gid)), os.Chmod(path, 0o640))
+		}
+	}
+
+	if !unchanged && (old == nil || old.svc.Config != svc.Config) {
 		// configs may hold secrets (PPPoE password, DNS provider token): readable by root and,
 		// through its group, by the daemon's account only
 		if err := os.WriteFile(path+".new", []byte(svc.Config), 0o600); err != nil {

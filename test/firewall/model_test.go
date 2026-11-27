@@ -1,6 +1,7 @@
 // Package firewall checks the rendered nftables ruleset against a model of what router.yaml means,
 // with real packets in a real kernel: random zones' rules are generated, loaded with nft in a
-// network namespace that routes between four links, and probes are sent from every side. What
+// network namespace that routes between four links, and probes are sent from every side over IPv4
+// and IPv6. What
 // arrives must be exactly what the model says, for every probe (make fuzz-firewall).
 //
 // The model is written from the documentation of router.yaml, not from the renderer: rules are read
@@ -29,19 +30,27 @@ import (
 	"github.com/j0n17/routal/pkg/nft"
 )
 
-// side is one link of the router and the host behind it; each link is its own zone.
+// side is one link of the router and the host behind it, in IPv4 and IPv6; each link is its own zone.
 type side struct {
 	zone, link string
-	router     netip.Prefix // the router's address on the link
-	host       netip.Addr   // the host behind it
+	router     [2]netip.Prefix // the router's addresses on the link: IPv4, IPv6
+	host       [2]netip.Addr   // the host behind it
+}
+
+func mkSide(zone, link, r4, h4, r6, h6 string) side {
+	return side{zone, link,
+		[2]netip.Prefix{netip.MustParsePrefix(r4), netip.MustParsePrefix(r6)},
+		[2]netip.Addr{netip.MustParseAddr(h4), netip.MustParseAddr(h6)}}
 }
 
 var sides = []side{
-	{"wan", "wan0", netip.MustParsePrefix("203.0.113.2/24"), netip.MustParseAddr("203.0.113.1")},
-	{"lan", "lan0", netip.MustParsePrefix("192.168.1.1/24"), netip.MustParseAddr("192.168.1.10")},
-	{"guest", "guest0", netip.MustParsePrefix("192.168.2.1/24"), netip.MustParseAddr("192.168.2.10")},
-	{"srv", "srv0", netip.MustParsePrefix("192.168.3.1/24"), netip.MustParseAddr("192.168.3.10")},
+	mkSide("wan", "wan0", "203.0.113.2/24", "203.0.113.1", "2001:db8:ff::2/64", "2001:db8:ff::1"),
+	mkSide("lan", "lan0", "192.168.1.1/24", "192.168.1.10", "fd00:1::1/64", "fd00:1::10"),
+	mkSide("guest", "guest0", "192.168.2.1/24", "192.168.2.10", "fd00:2::1/64", "fd00:2::10"),
+	mkSide("srv", "srv0", "192.168.3.1/24", "192.168.3.10", "fd00:3::1/64", "fd00:3::10"),
 }
+
+var families = []string{"IPv4", "IPv6"}
 
 var (
 	ports  = []uint16{53, 80, 443, 8080, 50000}
@@ -89,7 +98,8 @@ func setup(t *testing.T) {
 	t.Cleanup(teardown)
 
 	sh(t, "ip netns add %s", routerNS)
-	sh(t, "ip netns exec %s sysctl -q -w net.ipv4.ip_forward=1 net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.default.rp_filter=0", routerNS)
+	sh(t, "ip netns exec %s sysctl -q -w net.ipv4.ip_forward=1 net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.default.rp_filter=0 "+
+		"net.ipv6.conf.all.forwarding=1 net.ipv6.conf.default.forwarding=1", routerNS)
 	sh(t, "ip netns exec %s ip link set lo up", routerNS)
 
 	if err := os.WriteFile("/tmp/fw-probe.nft", []byte(probeTable), 0o600); err != nil {
@@ -102,12 +112,17 @@ func setup(t *testing.T) {
 		ns := hostNS(s)
 		sh(t, "ip netns add %s", ns)
 		sh(t, "ip link add %s netns %s type veth peer name eth0 netns %s", s.link, routerNS, ns)
-		sh(t, "ip netns exec %s ip addr add %s dev %s", routerNS, s.router, s.link)
 		sh(t, "ip netns exec %s ip link set %s up", routerNS, s.link)
 		sh(t, "ip netns exec %s ip link set lo up", ns)
-		sh(t, "ip netns exec %s ip addr add %s/%d dev eth0", ns, s.host, s.router.Bits())
 		sh(t, "ip netns exec %s ip link set eth0 up", ns)
-		sh(t, "ip netns exec %s ip route add default via %s", ns, s.router.Addr())
+
+		for f := range families {
+			// nodad: an IPv6 address is otherwise unusable for a second or two
+			sh(t, "ip netns exec %s ip addr add %s dev %s nodad", routerNS, s.router[f], s.link)
+			sh(t, "ip netns exec %s ip addr add %s/%d dev eth0 nodad", ns, s.host[f], s.router[f].Bits())
+			sh(t, "ip netns exec %s ip route add default via %s", ns, s.router[f].Addr())
+		}
+
 		sh(t, "ip netns exec %s nft -f /tmp/fw-probe.nft", ns)
 	}
 }
@@ -140,18 +155,24 @@ type scenario struct {
 
 func pick[T any](r *rand.Rand, xs []T) T { return xs[r.Intn(len(xs))] }
 
-// subnets returns nil (no restriction), or one or two prefixes that may or may not hold addr.
+// subnets returns nil (no restriction), or one or two prefixes, of either family, that may or may
+// not hold the host of the side.
 func subnets(r *rand.Rand, s side) []netip.Prefix {
 	if r.Intn(10) < 6 {
 		return nil
 	}
 
-	candidates := []netip.Prefix{
-		netip.PrefixFrom(s.host, 32),
-		s.router.Masked(),
-		netip.PrefixFrom(s.router.Masked().Addr().Next().Next().Next(), 32), // .3: nobody
-		netip.MustParsePrefix("10.99.0.0/16"),
+	var candidates []netip.Prefix
+
+	for f := range families {
+		candidates = append(candidates,
+			netip.PrefixFrom(s.host[f], s.host[f].BitLen()),
+			s.router[f].Masked(),
+			netip.PrefixFrom(s.router[f].Masked().Addr().Next().Next().Next(), s.host[f].BitLen()), // nobody
+		)
 	}
+
+	candidates = append(candidates, netip.MustParsePrefix("10.99.0.0/16"), netip.MustParsePrefix("fd99::/16"))
 
 	out := []netip.Prefix{pick(r, candidates)}
 	if r.Intn(4) == 0 {
@@ -316,10 +337,11 @@ func (ru rule) matches(proto string, port uint16, src, dst netip.Addr) bool {
 	return !ru.hasDst || within(ru.dst, dst)
 }
 
-// forwarded says whether the model lets a packet from the host of one side to the host of another.
-func (sc scenario) forwarded(from, to side, proto string, port uint16) bool {
+// forwarded says whether the model lets a packet from the host of one side to the host of another,
+// in family f.
+func (sc scenario) forwarded(from, to side, f int, proto string, port uint16) bool {
 	for _, ru := range sc.rules {
-		if ru.from == from.zone && ru.to == to.zone && ru.matches(proto, port, from.host, to.host) {
+		if ru.from == from.zone && ru.to == to.zone && ru.matches(proto, port, from.host[f], to.host[f]) {
 			return !ru.block
 		}
 	}
@@ -328,9 +350,9 @@ func (sc scenario) forwarded(from, to side, proto string, port uint16) bool {
 }
 
 // local says whether the model lets a packet from the host of a side to the router itself.
-func (sc scenario) local(from side, proto string, port uint16, dst netip.Addr) bool {
+func (sc scenario) local(from side, f int, proto string, port uint16, dst netip.Addr) bool {
 	for _, ru := range sc.rules {
-		if ru.from == from.zone && ru.to == config.SelfZone && ru.matches(proto, port, from.host, dst) {
+		if ru.from == from.zone && ru.to == config.SelfZone && ru.matches(proto, port, from.host[f], dst) {
 			return true
 		}
 	}
@@ -346,6 +368,7 @@ func (sc scenario) local(from side, proto string, port uint16, dst netip.Addr) b
 
 type probe struct {
 	from       side
+	family     int
 	dst        netip.Addr
 	dstNS      string
 	proto      string
@@ -392,18 +415,30 @@ func send(t *testing.T, probes []probe) {
 				typ = unix.SOCK_STREAM | unix.SOCK_NONBLOCK
 			}
 
-			fd, err := unix.Socket(unix.AF_INET, typ, 0)
+			var (
+				domain   = unix.AF_INET
+				from, to unix.Sockaddr
+			)
+
+			if p.dst.Is6() {
+				domain = unix.AF_INET6
+				from = &unix.SockaddrInet6{Port: int(p.sport)}
+				to = &unix.SockaddrInet6{Port: int(p.port), Addr: p.dst.As16()}
+			} else {
+				from = &unix.SockaddrInet4{Port: int(p.sport)}
+				to = &unix.SockaddrInet4{Port: int(p.port), Addr: p.dst.As4()}
+			}
+
+			fd, err := unix.Socket(domain, typ, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			open = append(open, fd)
 
-			if err := unix.Bind(fd, &unix.SockaddrInet4{Port: int(p.sport)}); err != nil {
+			if err := unix.Bind(fd, from); err != nil {
 				t.Fatalf("bind %d: %v", p.sport, err)
 			}
-
-			to := &unix.SockaddrInet4{Port: int(p.port), Addr: p.dst.As4()}
 
 			if p.proto == "tcp" {
 				if err := unix.Connect(fd, to); err != nil && err != unix.EINPROGRESS {
@@ -486,7 +521,7 @@ func TestRulesetMatchesModel(t *testing.T) {
 
 	addrs := map[string][]netip.Prefix{}
 	for _, s := range sides {
-		addrs[s.link] = []netip.Prefix{s.router}
+		addrs[s.link] = s.router[:]
 	}
 
 	e := env.Env{
@@ -518,26 +553,29 @@ func TestRulesetMatchesModel(t *testing.T) {
 
 		sport := uint16(20000)
 
-		for _, from := range sides {
-			for _, proto := range protos {
-				for _, port := range ports {
-					for _, to := range sides {
-						sport++
+		for f := range families {
+			for _, from := range sides {
+				for _, proto := range protos {
+					for _, port := range ports {
+						for _, to := range sides {
+							sport++
 
-						if to.zone == from.zone {
-							// to the router, on the address of the link the packet comes in through
+							if to.zone == from.zone {
+								// to the router, on the address of the link the packet comes in through
+								dst := from.router[f].Addr()
+								probes = append(probes, probe{
+									from: from, family: f, dst: dst, dstNS: routerNS, proto: proto, port: port, sport: sport,
+									want: sc.local(from, f, proto, port, dst), kind: "to the router",
+								})
+
+								continue
+							}
+
 							probes = append(probes, probe{
-								from: from, dst: from.router.Addr(), dstNS: routerNS, proto: proto, port: port, sport: sport,
-								want: sc.local(from, proto, port, from.router.Addr()), kind: "to the router",
+								from: from, family: f, dst: to.host[f], dstNS: hostNS(to), proto: proto, port: port, sport: sport,
+								want: sc.forwarded(from, to, f, proto, port), kind: "to " + to.zone,
 							})
-
-							continue
 						}
-
-						probes = append(probes, probe{
-							from: from, dst: to.host, dstNS: hostNS(to), proto: proto, port: port, sport: sport,
-							want: sc.forwarded(from, to, proto, port), kind: "to " + to.zone,
-						})
 					}
 				}
 			}
@@ -561,7 +599,7 @@ func TestRulesetMatchesModel(t *testing.T) {
 			}
 
 			t.Errorf("round %d (SEED=%d): from %s %s, %s %d to %s: arrived=%v, the model says %v\n--- router.yaml\n%s\n--- ruleset\n%s",
-				round, seed, p.from.zone, p.kind, p.proto, p.port, p.dst, got, p.want, sc.yaml, ruleset)
+				round, seed, p.from.zone, p.kind+" over "+families[p.family], p.proto, p.port, p.dst, got, p.want, sc.yaml, ruleset)
 
 			return
 		}

@@ -233,6 +233,13 @@ caps=$(sed -n 's/^CapEff:[[:space:]]*//p' "/proc/$upid/status")
 # with Talos' modes on routald's directories (see where it starts), no daemon was refused a file
 denied=$(nsx router grep -a -E 'Permission denied|config rejected' /tmp/routald.log | head -3)
 [ -z "$denied" ] && pass "no daemon was denied a file or had its config rejected" || fail "daemons denied: $denied"
+# routald's own verdict, logged at the start and whenever it changes: the last word is what counts
+# (a daemon that is not up yet when its state is first pushed to it is reported, then settles)
+health=$(nsx router grep -a '^health:' /tmp/routald.log | tail -1)
+case $health in
+"health: ok"*) pass "routald reports healthy: $health" ;;
+*) fail "routald's health: $health" ;;
+esac
 # listeners on the router itself: one inside the UPnP mapping range, one on the Talos API port
 serve router 30000 router-high
 serve router 50000 talos-api

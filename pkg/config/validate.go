@@ -544,7 +544,8 @@ func (cfg *Config) validateWAN(checkName func(kind, name string), checkLink func
 
 			ids[s.ID], links[s.Link] = true, true
 
-			if pd.PrefixLength != 0 && s.ID >= 1<<(64-pd.PrefixLength) {
+			// only for a valid length (a negative shift panics), in 64 bits (a /32 has 2^32 /64s)
+			if pd.PrefixLength >= 32 && pd.PrefixLength <= 64 && uint64(s.ID) >= uint64(1)<<(64-pd.PrefixLength) {
 				fail("%s: subnet id %d does not fit in a /%d", where, s.ID, pd.PrefixLength)
 			}
 		}

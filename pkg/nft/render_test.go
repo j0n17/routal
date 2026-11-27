@@ -409,3 +409,35 @@ func TestRenderSNATv6(t *testing.T) {
 		t.Errorf("missing %q in:\n%s", want, out)
 	}
 }
+
+// A rule whose sources and destinations have no address family in common renders to nothing; the
+// chain of its zone must still exist, or nft refuses the whole ruleset (found by the firewall model
+// test).
+func TestRenderRuleOfNoFamily(t *testing.T) {
+	cfg, err := config.Load([]byte(`apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: never
+from: lan
+to: wan
+sourceSubnets: [192.168.1.0/24]
+destinationSubnets: [2001:db8::/32]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := nft.Render(cfg, env.Static())
+	if !strings.Contains(out, `"lan0" : jump from_lan`) || !strings.Contains(out, "\tchain from_lan {\n\t}\n") {
+		t.Errorf("the forward chain jumps to a chain that is not there:\n%s", out)
+	}
+}

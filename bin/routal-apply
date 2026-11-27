@@ -1,0 +1,84 @@
+#!/bin/sh
+# Applies a router.yaml the safe way: Talos takes the config back on its own unless the router is
+# healthy with it.
+#
+#   1. the config is validated and turned into a Talos patch (routald validate, talos-patch)
+#   2. the patch is applied with --mode try: Talos reverts it after the timeout
+#   3. the router must report healthy with the new config (routald's status report, read through
+#      the Talos API: being locked out counts as not healthy), and every --check command must pass
+#   4. only then is the config applied for good; otherwise nothing is done and Talos reverts
+#
+# Usage: routal-apply [--timeout 2m] [--check 'command']... router.yaml
+#   TALOSCTL  how to reach the router, default "talosctl" (e.g. "talosctl -n 192.168.1.1")
+#   ROUTALD   the routald binary of the version the router runs, default "routald"
+set -eu
+talosctl=${TALOSCTL:-talosctl} routald=${ROUTALD:-routald}
+timeout=2m checks=
+while [ $# -gt 1 ]; do
+	case $1 in
+	--timeout) timeout=$2 ;;
+	--check) checks="$checks
+$2" ;;
+	*) echo "usage: routal-apply [--timeout 2m] [--check 'command']... router.yaml" >&2; exit 2 ;;
+	esac
+	shift 2
+done
+[ $# -eq 1 ] || { echo "usage: routal-apply [--timeout 2m] [--check 'command']... router.yaml" >&2; exit 2; }
+conf=$1
+
+case $timeout in
+*m) seconds=$((${timeout%m} * 60)) ;;
+*s) seconds=${timeout%s} ;;
+*) echo "--timeout: minutes (2m) or seconds (90s)" >&2; exit 2 ;;
+esac
+[ "$seconds" -ge 60 ] || { echo "--timeout: at least 60s, the router needs time to restart its daemons" >&2; exit 2; }
+
+work=${ROUTAL_APPLY_DIR:-$(mktemp -d)}
+status() { $talosctl read /run/routal/routal/status.json 2>/dev/null; }
+started() { status | sed -n 's/^ *"started": *"\([^"]*\)".*/\1/p'; }
+
+$routald validate "$conf"
+$talosctl get mc -o yaml >"$work/current.yaml"
+$routald talos-patch -current "$work/current.yaml" "$conf" >"$work/patch.yaml"
+before=$(started)
+
+echo "applying with --mode try: Talos reverts in $timeout unless the router is healthy"
+$talosctl patch mc --patch "@$work/patch.yaml" --mode try --timeout "$timeout" >"$work/patch.log" 2>&1 ||
+	{ cat "$work/patch.log" >&2; exit 1; }
+
+# healthy: routald restarted with the new config (or the config changed nothing for it) and says so
+deadline=$(($(date +%s) + seconds - 25))
+sleep 10
+healthy=
+while [ "$(date +%s)" -lt "$deadline" ]; do
+	if [ "$(started)" != "$before" ] || [ "$(date +%s)" -gt $((deadline - seconds + 55)) ]; then
+		if status >"$work/status.json" && $routald status "$work/status.json" >"$work/status.txt" 2>&1; then
+			healthy=1
+			break
+		fi
+	fi
+	sleep 5
+done
+
+if [ -n "$healthy" ]; then
+	echo "$checks" | while IFS= read -r check; do
+		[ -z "$check" ] && continue
+		if ! sh -c "$check" >/dev/null 2>&1; then
+			echo "check failed: $check" >&2
+			exit 1
+		fi
+	done || healthy=
+fi
+
+if [ -z "$healthy" ]; then
+	echo "NOT healthy with this config: nothing is confirmed, Talos reverts it by itself" >&2
+	cat "$work/status.txt" 2>/dev/null >&2 || echo "(the router did not answer: locked out?)" >&2
+	exit 1
+fi
+
+cat "$work/status.txt"
+# Confirming is applying the config the router runs, outside of try mode. A patch would be skipped
+# ("no changes"): the tried config is the current one.
+$talosctl get mc v1alpha1 -o jsonpath='{.spec}' >"$work/confirmed.yaml"
+$talosctl apply-config -f "$work/confirmed.yaml" >"$work/confirm.log" 2>&1 || { cat "$work/confirm.log" >&2; exit 1; }
+echo "healthy: the config is applied for good"

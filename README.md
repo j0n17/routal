@@ -86,10 +86,21 @@ routald render-services router.yaml out/         # daemon configs (Kea, Unbound,
 routald talos-render talos.yaml > /tmp/talos.yaml
 talosctl patch mc --patch @/tmp/talos.yaml --mode try --timeout 2m
 
-# router
-talosctl get mc -o yaml > /tmp/current.yaml
-routald talos-patch -current /tmp/current.yaml router.yaml > /tmp/router-patch.yaml
-talosctl patch mc --patch @/tmp/router-patch.yaml --mode try --timeout 2m   # reverts unless confirmed
+# router: Talos reverts the config unless the router reports healthy with it
+bin/routal-apply router.yaml
+```
+
+`bin/routal-apply` validates the file, turns it into a Talos patch (`routald talos-patch -current`),
+applies it with `--mode try`, and confirms it only when the router is healthy with it: routald's
+own report says so and every `--check 'command'` passes. A config that locks you out is never
+confirmed: Talos takes it back after the timeout.
+
+routald reports its health after every reconcile (every 5 s): whether the config is applied, and
+for each daemon whether it runs and stays up. Changes are logged (`health: NOT OK: ...`), and the
+report can be read at any time:
+
+```sh
+talosctl read /run/routal/routal/status.json | routald status -   # exit status 1 when not healthy
 ```
 
 `talos-patch` wraps router.yaml in an `ExtensionServiceConfig` (Talos restarts routald with the new
@@ -188,6 +199,10 @@ make check         # + every example and variant checked by the real tools: nft 
 make cover         # coverage of the unit tests and of an instrumented routald in make integration
 make schema        # regenerate the JSON schema of router.yaml after changing pkg/config (make test fails when it is stale)
 make fuzz          # fuzz the parsers and the config (FUZZTIME=1m per target); the real tools check what is rendered
+make fuzz-firewall # random rules in a real kernel, probed from every zone over IPv4 and IPv6, against a model of router.yaml
+make lint          # staticcheck and govulncheck (part of make check); make test runs the unit tests with the race detector
+make mutation      # mutation testing: deliberate bugs, one by one, that the test suite must notice (slow; weekly in CI)
+make site          # the web page (reference, examples, personas), published by GitHub Pages
 make integration   # data plane in network namespaces: router, LAN clients, NAS VLAN, WAN host, VPN peer
 make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
 ```
@@ -216,50 +231,16 @@ user, applied the way a user would, with what that user expects to work and not 
 | `05-guests` | visitors on their own VLAN get the Internet, and reach neither the house nor the router's API |
 | `06-hotel` | guests get tcp 80 and 443 through the hotel's DNS and nothing else; the staff network is unrestricted and out of reach |
 
-### Releases
+On the newest Talos version CI goes further (`ADVANCED=1`): after each persona every TCP port is
+scanned from outside over IPv4 and IPv6; the homelab goes through a reboot and a WAN outage; then
+`test/vm/advanced.sh` boots the router with no Internet, after a power cut with damaged files, with
+a full disk and with its clock in the year 2000, runs `bin/routal-apply` with a good config and
+with one that locks the admin out, and exhausts the DHCP pool and the connection table.
+`make vm-upgrade-test` boots an older build and upgrades it to this one.
 
-A tag `vX.Y.Z` publishes (`.github/workflows/release.yml`) the installer with the extension for
-every tested Talos version, amd64 and arm64, as
-`ghcr.io/<owner>/routal-installer:<X.Y.Z>-talos-<talos version>`, and the extension tarballs on a
-GitHub release. Supported Talos: 1.14 and later.
-
-## Tests
-
-```sh
-make test          # unit tests, gofmt, go vet, config variants (valid and invalid)
-make check         # + every example and variant checked by the real tools: nft -c, kea -t,
-                   #   unbound-checkconf, radvd -c, chronyd -p, inadyn --check-config, talosctl validate
-make cover         # coverage of the unit tests and of an instrumented routald in make integration
-make schema        # regenerate the JSON schema of router.yaml after changing pkg/config (make test fails when it is stale)
-make fuzz          # fuzz the parsers and the config (FUZZTIME=1m per target); the real tools check what is rendered
-make integration   # data plane in network namespaces: router, LAN clients, NAS VLAN, WAN host, VPN peer
-make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
-```
-
-GitHub Actions (`.github/workflows/ci.yml`) runs `make check`, `make integration`, `make fuzz
-FUZZTIME=30s` and builds the extension for amd64 and arm64 on every push and pull request.
-It also validates the examples, builds the installer and boots it for every Talos version listed
-by `hack/talos-versions.sh` (the last three releases of each supported line, today 1.14 and 1.15),
-on every push and every Monday. For one version locally:
-`make check-talos installer TALOS_VERSION=v1.14.7`.
-
-`make vm-test` boots that Talos with the extension in a VM (tart on an Apple silicon Mac; QEMU
-with KVM and sudo on Linux, which is what CI runs for every version), applies `test/vm`, and
-checks what only a real Talos shows: the extension starts, every daemon runs under its account
-with its capabilities, and the WAN side is closed. On Linux the VM has a second NIC with a client
-behind it: DHCP lease, SLAAC, DNS over TLS with DNSSEC, and the Internet through the router.
-It then plays personas (`test/vm/personas`): each is a complete `router.yaml` for one kind of
-user, applied the way a user would, with what that user expects to work and not to work.
-
-| Persona | Expects |
-|---|---|
-| `01-family` | Internet and DNS for every device, ad domains blocked, nothing reachable from outside |
-| `02-gamer` | a game opens its port with UPnP and is reachable on it; it cannot open one for another device |
-| `03-homelab` | the NAS keeps its address and its name; one of its ports is published, the others are not |
-| `04-guests` | visitors on their own VLAN get the Internet, and reach neither the house nor the router's API |
 It removes the VM and the image when it ends.
 
-Both run the real routald and daemons with `examples/nas-vpn` and the same 90 checks
+Both run the real routald and daemons with `examples/nas-vpn` and the same 91 checks
 (test/integration/checks.sh): DHCP, SLAAC, DNS, DNS blocking, the firewall in IPv4 and IPv6, NAT,
 reflection, UPnP, NTP, mDNS, the hardening above (daemon accounts, UPnP range, WAN closed by default), options applied on the running router (SNAT to a fixed address, an
 IPv6 port forward with `toPort`, `forwardDefault: accept`, blocking with 0.0.0.0 answers, DHCPv6

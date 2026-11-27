@@ -37,6 +37,11 @@ type agent struct {
 	vrf        vrfServices
 
 	applied [32]byte
+
+	// for the status report
+	started    time.Time
+	lastHealth string
+	reported   bool
 }
 
 func (a *agent) run(ctx context.Context) error {
@@ -46,10 +51,15 @@ func (a *agent) run(ctx context.Context) error {
 	ticker := time.NewTicker(reconcileInterval)
 	defer ticker.Stop()
 
+	a.started = time.Now()
+
 	for {
-		if err := a.reconcile(); err != nil {
+		err := a.reconcile()
+		if err != nil {
 			log.Printf("error: %v (keeping the previously applied rules)", err)
 		}
+
+		a.report(err)
 
 		select {
 		case <-ctx.Done():

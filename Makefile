@@ -34,6 +34,11 @@ fuzz: ## fuzz the parsers and the config for FUZZTIME each; nft, Unbound, radvd 
 		CGO_ENABLED=0 GOARCH=$(ARCH) go test -c -fuzz=Fuzz -o $(OUT)/fuzz/$$(basename $$p).test ./$$p || exit 1; done'
 	docker run --rm --platform linux/$(ARCH) --cap-add NET_ADMIN -v "$(CURDIR)":/src routal-daemons:$(ARCH) /src/hack/fuzz.sh $(FUZZTIME) /src/$(OUT)/fuzz
 
+mutation: ## mutation testing: bugs are put in the code one by one, and the whole test suite must notice (slow; a report, not a gate)
+	$(GO) sh -c 'for p in pkg/config pkg/nft pkg/services pkg/talospatch pkg/pd pkg/leases; do echo "== $$p"; \
+		go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.0 unleash --integration --timeout-coefficient 10 ./$$p 2>&1 | \
+		grep -E "LIVED|Killed:|Timed out:|efficacy"; done'
+
 fuzz-firewall: ## random rules loaded in a real kernel, probed from every zone and compared with a model of router.yaml (ROUNDS=150, SEED= to replay)
 	docker build --platform linux/$(ARCH) --target daemons -t routal-daemons:$(ARCH) .
 	mkdir -p $(OUT)/fuzz
@@ -88,6 +93,9 @@ vm-test: ## boot Talos TALOS_VERSION with the extension in a VM (tart on an Appl
 
 vm-upgrade-test: ## Linux: boot the build of test/vm/upgrade-from, upgrade it to this one with talosctl upgrade, check that the state is kept
 	hack/vm-upgrade.sh $(TALOS_VERSION) $(OUT) $(VM_ARCH)
+
+site: ## the project's web page (reference from the schema, examples, personas): $(OUT)/site/index.html
+	$(GO) go run ./hack/site $(OUT)/site
 
 clean:
 	rm -f $(OUT)/*.tar $(OUT)/*.raw $(OUT)/*.yaml
