@@ -250,9 +250,10 @@ func main() {
 <p>A GitOps-managed router built on <a href="https://www.talos.dev">Talos Linux</a>: stock Talos runs the machine, and the
 <code>routald</code> system extension turns it into a router: zone firewall, NAT, port forwards, UPnP, DHCP, DNS with
 blocklists, IPv6 router advertisements and prefix delegation, PPPoE, NTP, mDNS.</p>
-<div class="warn"><strong>Experiment, not a real project.</strong> AI-generated code, written to try out an idea. It has only been
-tested in VMs and network namespaces, never on real hardware or with a real ISP, and is not maintained. Do not put it in
-front of anything you care about.</div>
+<div class="warn"><strong>A toy experiment more than a product.</strong> Routal is a small project with few users:
+AI-generated code, written to try out an idea. It has only been tested in VMs and network namespaces, never on real
+hardware or with a real ISP. It is maintained, at its own pace: there is no release schedule and no promise of support.
+Do not put it in front of anything you care about.</div>
 <p>Source, tests and design notes: <a href="https://github.com/j0n17/routal">github.com/j0n17/routal</a>.</p>
 
 <h2 id="layout">A router in git</h2>
