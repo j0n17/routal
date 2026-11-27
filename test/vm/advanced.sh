@@ -130,7 +130,7 @@ again "past the try timeout, the confirmed config is still there"
 grep -v '^#' test/vm/personas/01-family/router.yaml | awk 'BEGIN { RS = "---\n"; ORS = "---\n" } !/admin-from-host/' |
 	sed -e "s|\$SUBNET|$subnet|" >"$PWD/$work/apply/lockout.yaml"
 if safe_apply "$PWD/$work/apply/lockout.yaml"; then
-	fail "routal-apply confirmed a config that locks the admin out"
+	fail "routal-apply confirmed a config that locks the admin out: $(tr '\n' ' ' <"$work/apply.log" | cut -c1-400)"
 else
 	pass "routal-apply does not confirm a config that locks the admin out: $(grep -m1 'NOT healthy' "$work/apply.log" | cut -c1-120)"
 fi

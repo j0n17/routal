@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +28,9 @@ type Status struct {
 	Time time.Time `json:"time"`
 	// Started is when this routald started.
 	Started time.Time `json:"started"`
+	// Config is the SHA-256 of the router.yaml this routald runs: after a change, the report of the
+	// previous config must not be taken for the new one's.
+	Config string `json:"config,omitempty"`
 	// Healthy: the config is applied and every daemon it needs is running and stays up.
 	Healthy bool `json:"healthy"`
 	// Problems are the reasons it is not healthy.
@@ -89,6 +93,10 @@ func (s *supervisor) status() (daemons []DaemonStatus, problems, warnings []stri
 func (a *agent) report(reconcileErr error) {
 	st := Status{Time: time.Now(), Started: a.started}
 
+	if raw, err := os.ReadFile(a.configPath); err == nil {
+		st.Config = fmt.Sprintf("%x", sha256.Sum256(raw))
+	}
+
 	st.Daemons, st.Problems, st.Warnings = a.services.status()
 	if reconcileErr != nil {
 		st.Problems = append([]string{"the config is not fully applied: " + firstLine(reconcileErr.Error())}, st.Problems...)
@@ -131,9 +139,10 @@ func firstLine(s string) string {
 	return line
 }
 
-// printStatus is `routald status`: it prints a report and fails when the router is not healthy or
-// the report is older than maxAge (0: any age).
-func printStatus(r io.Reader, w io.Writer, maxAge time.Duration, now time.Time) error {
+// printStatus is `routald status`: it prints a report and fails when the router is not healthy, the
+// report is older than maxAge (0: any age), or the router runs another config than wantConfig (a
+// SHA-256; empty: any).
+func printStatus(r io.Reader, w io.Writer, maxAge time.Duration, now time.Time, wantConfig string) error {
 	var st Status
 
 	raw, err := io.ReadAll(r)
@@ -179,6 +188,8 @@ func printStatus(r io.Reader, w io.Writer, maxAge time.Duration, now time.Time) 
 	_ = tw.Flush()
 
 	switch {
+	case wantConfig != "" && st.Config != wantConfig:
+		return fmt.Errorf("the router runs another config (it has not restarted with this one yet)")
 	case maxAge > 0 && (age > maxAge || age < -maxAge):
 		return fmt.Errorf("the report is %s old: routald is not running, or the clocks differ (-max-age 0 to ignore)", age)
 	case !st.Healthy:
@@ -191,9 +202,20 @@ func printStatus(r io.Reader, w io.Writer, maxAge time.Duration, now time.Time) 
 func statusCommand(args []string) error {
 	path := filepath.Join(services.DefaultDirs.Run, StatusFile)
 	maxAge := time.Minute
+	wantConfig := ""
 
 	for len(args) > 0 {
 		switch {
+		case args[0] == "-config" && len(args) > 1:
+			// the router.yaml the router is expected to run
+			raw, err := os.ReadFile(args[1])
+			if err != nil {
+				return err
+			}
+
+			// as talos-patch ships it: one newline at the end
+			shipped := strings.TrimRight(string(raw), "\n") + "\n"
+			wantConfig, args = fmt.Sprintf("%x", sha256.Sum256([]byte(shipped))), args[2:]
 		case args[0] == "-max-age" && len(args) > 1:
 			d, err := time.ParseDuration(args[1])
 			if err != nil {
@@ -218,5 +240,5 @@ func statusCommand(args []string) error {
 		in = f
 	}
 
-	return printStatus(in, os.Stdout, maxAge, time.Now())
+	return printStatus(in, os.Stdout, maxAge, time.Now(), wantConfig)
 }

@@ -35,27 +35,24 @@ esac
 
 work=${ROUTAL_APPLY_DIR:-$(mktemp -d)}
 status() { $talosctl read /run/routal/routal/status.json 2>/dev/null; }
-started() { status | sed -n 's/^ *"started": *"\([^"]*\)".*/\1/p'; }
 
 $routald validate "$conf"
 $talosctl get mc -o yaml >"$work/current.yaml"
 $routald talos-patch -current "$work/current.yaml" "$conf" >"$work/patch.yaml"
-before=$(started)
-
 echo "applying with --mode try: Talos reverts in $timeout unless the router is healthy"
 $talosctl patch mc --patch "@$work/patch.yaml" --mode try --timeout "$timeout" >"$work/patch.log" 2>&1 ||
 	{ cat "$work/patch.log" >&2; exit 1; }
 
-# healthy: routald restarted with the new config (or the config changed nothing for it) and says so
+# healthy: routald runs this very file (its report carries the hash of the config it runs: the
+# report of the previous config, still there while Talos restarts routald, does not count) and
+# says it is healthy with it
 deadline=$(($(date +%s) + seconds - 25))
-sleep 10
+sleep 5
 healthy=
 while [ "$(date +%s)" -lt "$deadline" ]; do
-	if [ "$(started)" != "$before" ] || [ "$(date +%s)" -gt $((deadline - seconds + 55)) ]; then
-		if status >"$work/status.json" && $routald status "$work/status.json" >"$work/status.txt" 2>&1; then
-			healthy=1
-			break
-		fi
+	if status >"$work/status.json" && $routald status -config "$conf" "$work/status.json" >"$work/status.txt" 2>&1; then
+		healthy=1
+		break
 	fi
 	sleep 5
 done

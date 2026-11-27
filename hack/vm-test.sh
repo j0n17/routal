@@ -269,7 +269,10 @@ done
 # routald's own health report, read through the Talos API and judged by `routald status`
 routald_cli() { docker run --rm -v "$PWD":"$PWD" -w "$PWD" golang:1.26 "$PWD/$work/routald" "$@"; }
 healthy() { T read /run/routal/routal/status.json >"$work/status.json" 2>/dev/null && routald_cli status "$work/status.json" >"$work/status.txt" 2>&1; }
-healthy && pass "routald reports healthy: $(grep -c ' running ' "$work/status.txt") daemons running" || fail "routald's status: $(tr '\n' ' ' <"$work/status.txt" | cut -c1-300)"
+# (the build an upgrade starts from may be older than the report)
+if [ -z "${UPGRADE_TO:-}" ]; then
+	healthy && pass "routald reports healthy: $(grep -c ' running ' "$work/status.txt") daemons running" || fail "routald's status: $(tr '\n' ' ' <"$work/status.txt" | cut -c1-300)"
+fi
 
 if [ "$backend" = qemu ]; then
 	echo "== a client behind the router (network namespace on the LAN bridge)"
@@ -360,8 +363,12 @@ SCRIPT
 		# an answer on UDP ("open"; no answer shows as "open|filtered"): only a service would send one
 		got=$(open_ports -sU -p 53,67,69,123,161,500,1900,4500,5351,5353,51820 "$ip")
 		[ -z "$got" ] && pass "$1, port scan from outside: no UDP service answers" || fail "$1, port scan from outside: UDP ports answering: $got"
-		ping -6 -c 2 -W 2 "ff02::1%$bridge" >/dev/null 2>&1 || true
-		ll=$(ip -6 neigh show dev "$bridge" | awk -v m="$mac" 'tolower($0) ~ m && $1 ~ /^fe80/ { print $1; exit }')
+		# the router's link-local address on the WAN link: asked once, it does not change
+		for _ in 1 2 3 4 5; do
+			[ -n "${ll:-}" ] && break
+			ping -6 -c 2 -W 2 "ff02::1%$bridge" >/dev/null 2>&1 || true
+			ll=$(ip -6 neigh show dev "$bridge" | awk -v m="$mac" 'tolower($0) ~ m && $1 ~ /^fe80/ { print $1; exit }')
+		done
 		if [ -z "$ll" ]; then
 			fail "$1: the router's IPv6 address on the WAN link was not found"
 		else
@@ -409,6 +416,7 @@ SCRIPT
 			[ "$(kept)" -gt 0 ] && pass "after the upgrade: the lease of the NAS is still on disk" || fail "after the upgrade: the lease of the NAS is gone"
 			trouble=$(grep -E 'LEASE_SANITY_FAIL|Permission denied|config rejected|keeps exiting' "$work/routald.log" | head -3 || true)
 			[ -z "$trouble" ] && pass "after the upgrade: the new build takes the old state over without a complaint" || fail "after the upgrade: $trouble"
+			healthy && pass "after the upgrade: routald reports healthy" || fail "after the upgrade: $(tr '\n' ' ' <"$work/status.txt" | cut -c1-300)"
 			echo "   after the upgrade, the homelab again:"
 			# shellcheck disable=SC1090
 			. "$homelab/checks.sh"

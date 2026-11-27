@@ -15,7 +15,11 @@ import (
 
 func TestStatusReport(t *testing.T) {
 	dirs := services.Dirs{State: t.TempDir(), Run: t.TempDir()}
-	a := &agent{dirs: dirs, services: newSupervisor(dirs), started: time.Now()}
+	a := &agent{dirs: dirs, services: newSupervisor(dirs), started: time.Now(), configPath: filepath.Join(dirs.State, "router.yaml")}
+
+	if err := os.WriteFile(a.configPath, []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	good := services.Service{
 		Name: "good", File: "good.conf", Config: "x", Command: []string{"/bin/sh", "-c", "exec sleep 60"},
@@ -51,6 +55,10 @@ func TestStatusReport(t *testing.T) {
 	st := read()
 	if !st.Healthy || len(st.Daemons) != 1 || st.Daemons[0].State != "running" || st.Daemons[0].PID == 0 || st.Daemons[0].Starts != 1 {
 		t.Errorf("one running daemon: %+v", st)
+	}
+
+	if st.Config != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" { // sha256("abc")
+		t.Errorf("config = %q", st.Config)
 	}
 
 	if len(st.Warnings) != 1 || !strings.Contains(st.Warnings[0], "wan0 has no address yet") {
@@ -134,7 +142,7 @@ func TestPrintStatus(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := printStatus(strings.NewReader(report(healthy)), &out, time.Minute, now); err != nil {
+	if err := printStatus(strings.NewReader(report(healthy)), &out, time.Minute, now, ""); err != nil {
 		t.Errorf("healthy report: %v", err)
 	}
 
@@ -149,12 +157,22 @@ func TestPrintStatus(t *testing.T) {
 	}
 
 	// a report that is not renewed: routald is gone
-	if err := printStatus(strings.NewReader(report(healthy)), &out, time.Minute, now.Add(10*time.Minute)); err == nil || !strings.Contains(err.Error(), "old") {
+	if err := printStatus(strings.NewReader(report(healthy)), &out, time.Minute, now.Add(10*time.Minute), ""); err == nil || !strings.Contains(err.Error(), "old") {
 		t.Errorf("stale report: %v", err)
 	}
 
-	if err := printStatus(strings.NewReader(report(healthy)), &out, 0, now.Add(10*time.Minute)); err != nil {
+	if err := printStatus(strings.NewReader(report(healthy)), &out, 0, now.Add(10*time.Minute), ""); err != nil {
 		t.Errorf("stale report with -max-age 0: %v", err)
+	}
+
+	// the report of another config than the one just applied: the router has not restarted with it
+	healthy.Config = "aaaa"
+	if err := printStatus(strings.NewReader(report(healthy)), &out, time.Minute, now, "bbbb"); err == nil || !strings.Contains(err.Error(), "another config") {
+		t.Errorf("report of another config: %v", err)
+	}
+
+	if err := printStatus(strings.NewReader(report(healthy)), &out, time.Minute, now, "aaaa"); err != nil {
+		t.Errorf("report of the expected config: %v", err)
 	}
 
 	sick := healthy
@@ -163,7 +181,7 @@ func TestPrintStatus(t *testing.T) {
 
 	out.Reset()
 
-	if err := printStatus(strings.NewReader(report(sick)), &out, time.Minute, now); err == nil || !strings.Contains(err.Error(), "unbound is not running") {
+	if err := printStatus(strings.NewReader(report(sick)), &out, time.Minute, now, ""); err == nil || !strings.Contains(err.Error(), "unbound is not running") {
 		t.Errorf("sick report: %v", err)
 	}
 
@@ -171,7 +189,7 @@ func TestPrintStatus(t *testing.T) {
 		t.Errorf("sick output:\n%s", out.String())
 	}
 
-	if err := printStatus(strings.NewReader("garbage"), &out, 0, now); err == nil {
+	if err := printStatus(strings.NewReader("garbage"), &out, 0, now, ""); err == nil {
 		t.Error("garbage was taken for a report")
 	}
 }
