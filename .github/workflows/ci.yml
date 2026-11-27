@@ -125,6 +125,14 @@ jobs:
       - run: |
           { make check-talos TALOS_VERSION=${{ matrix.talos }} &&
             make installer TALOS_VERSION=${{ matrix.talos }}; } 2>&1 | tee ci.log
+      # the same version for real: boots the image in QEMU (KVM) and checks the extension, the
+      # daemons' accounts and capabilities, and the WAN side
+      - name: VM tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-system-x86 ovmf dnsmasq-base netcat-openbsd
+      - name: Boot test
+        run: make vm-test TALOS_VERSION=${{ matrix.talos }} 2>&1 | tee ci.log
       - name: Failure summary
         if: failure()
         run: hack/ci-summary.sh ci.log

@@ -192,10 +192,10 @@ It also validates the examples and builds the installer for every Talos version 
 from 1.15 on), on every push and every Monday. For one version locally:
 `make check-talos installer TALOS_VERSION=v1.15.0-beta.0`.
 
-`make vm-test` (Apple silicon Mac with [tart](https://tart.run) and talosctl) boots that Talos
-with the extension in a VM, applies `test/vm`, and checks what only a real Talos shows: the
-extension starts, every daemon runs under its account with its capabilities, and the WAN side
-is closed. It removes the VM and the image when it ends.
+`make vm-test` boots that Talos with the extension in a VM (tart on an Apple silicon Mac; QEMU
+with KVM and sudo on Linux, which is what CI runs for every version), applies `test/vm`, and
+checks what only a real Talos shows: the extension starts, every daemon runs under its account
+with its capabilities, and the WAN side is closed. It removes the VM and the image when it ends.
 
 Both run the real routald and daemons with `examples/nas-vpn` and the same 90 checks
 (test/integration/checks.sh): DHCP, SLAAC, DNS, DNS blocking, the firewall in IPv4 and IPv6, NAT,

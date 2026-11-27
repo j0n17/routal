@@ -1,43 +1,115 @@
 #!/bin/sh
-# Boots the Talos image with the extension (make image) in a tart VM on an Apple silicon Mac, applies
-# test/vm, and checks what only a real Talos shows: the extension starts, every daemon runs under
-# its account with its capabilities, and the WAN side is closed. The VM, its disk and the image are
-# removed at the end (KEEP=1 keeps the VM running and prints how to reach it).
-# Usage: hack/vm-test.sh <talos version> <out dir>      (make vm-test)
+# Boots the Talos image with the extension (make image) in a VM, applies test/vm, and checks what
+# only a real Talos shows: the extension starts, every daemon runs under its account with its
+# capabilities, and the WAN side is closed. On macOS (Apple silicon) the VM is a tart VM; on Linux
+# it is QEMU with KVM on a tap device, with dnsmasq as the ISP (needs sudo; this is what CI runs).
+# The VM, its disk and the image are removed at the end (KEEP=1 keeps the VM and says how to reach it).
+# Usage: hack/vm-test.sh <talos version> <out dir> <arch>      (make vm-test)
 set -eu
-version=$1 out=$2
+version=$1 out=$2 arch=$3
 vm=routal-vmtest
 work=$out/vm-test
-image=$out/metal-arm64.raw
+image=$out/metal-$arch.raw
 
-for tool in tart talosctl docker nc ping; do
+case $(uname -s) in
+Darwin) backend=tart tools="tart talosctl docker nc ping" ;;
+*) backend=qemu tools="docker nc ping sudo dnsmasq ip iptables qemu-system-x86_64" ;;
+esac
+for tool in $tools; do
 	command -v "$tool" >/dev/null || { echo "vm-test needs $tool"; exit 1; }
 done
-[ -f "$image" ] || { echo "$image is missing: make image ARCH=arm64 TALOS_VERSION=$version"; exit 1; }
-if tart list | awk '{print $2}' | grep -qx "$vm"; then echo "a VM named $vm exists: tart delete $vm"; exit 1; fi
+[ -f "$image" ] || { echo "$image is missing: make image ARCH=$arch TALOS_VERSION=$version"; exit 1; }
+
+# --- tart (macOS): shared network, the Mac is the WAN side
+tart_start() {
+	if tart list | awk '{print $2}' | grep -qx "$vm"; then echo "a VM named $vm exists: tart delete $vm"; exit 1; fi
+	# 6 GB: the image is 3 GB and EPHEMERAL (/var) needs room, or /var/lib never appears
+	tart create --linux --disk-size 6 "$vm"
+	tart set "$vm" --cpu 2 --memory 2048
+	cp "$image" "$HOME/.tart/vms/$vm/disk.img"
+	truncate -s 6G "$HOME/.tart/vms/$vm/disk.img"
+	mac=$(sed -n 's/.*"macAddress" *: *"\([^"]*\)".*/\1/p' "$HOME/.tart/vms/$vm/config.json")
+	tart run --no-graphics "$vm" >"$work/tart.log" 2>&1 &
+	ip=$(tart ip "$vm" --wait 120)
+}
+tart_stop() {
+	tart stop "$vm" >/dev/null 2>&1 || true
+	tart delete "$vm" >/dev/null 2>&1 || true
+}
+
+# --- QEMU (Linux): a bridge with dnsmasq and NAT plays the ISP, this host is the WAN side
+bridge=br-routal tap=tap-routal net=192.168.212
+qemu_start() {
+	mac=52:54:00:d4:00:32 ip=$net.50
+	cp "$image" "$work/disk.img"
+	truncate -s 6G "$work/disk.img"
+	sudo ip link add "$bridge" type bridge
+	sudo ip addr add "$net.1/24" dev "$bridge"
+	sudo ip link set "$bridge" up
+	sudo ip tuntap add "$tap" mode tap
+	sudo ip link set "$tap" master "$bridge" up
+	sudo sysctl -q -w net.ipv4.ip_forward=1
+	sudo iptables -t nat -I POSTROUTING -s "$net.0/24" ! -o "$bridge" -j MASQUERADE
+	sudo iptables -I FORWARD -i "$bridge" -j ACCEPT
+	sudo iptables -I FORWARD -o "$bridge" -j ACCEPT
+	sudo dnsmasq --interface="$bridge" --bind-interfaces --except-interface=lo --port=0 \
+		--dhcp-range="$net.50,$net.60,1h" --dhcp-host="$mac,$ip" --dhcp-option=6,1.1.1.1,9.9.9.9 \
+		--dhcp-leasefile="$PWD/$work/dnsmasq.leases" --pid-file="$PWD/$work/dnsmasq.pid"
+	firmware=
+	for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do
+		if [ -f "$f" ]; then firmware=$f; break; fi
+	done
+	[ -n "$firmware" ] || { echo "no OVMF firmware found (apt install ovmf)"; exit 1; }
+	accel="-accel tcg -cpu max"
+	if [ -e /dev/kvm ]; then accel="-accel kvm -cpu host"; fi
+	# shellcheck disable=SC2086
+	sudo qemu-system-x86_64 $accel -machine q35 -m 2048 -smp 2 \
+		-drive if=pflash,format=raw,readonly=on,file="$firmware" \
+		-drive if=virtio,format=raw,file="$work/disk.img" \
+		-netdev tap,id=n0,ifname="$tap",script=no,downscript=no -device virtio-net-pci,netdev=n0,mac="$mac" \
+		-display none -serial file:"$work/console.log" -daemonize -pidfile "$work/qemu.pid"
+}
+qemu_stop() {
+	for pidfile in "$work/qemu.pid" "$work/dnsmasq.pid"; do
+		if [ -f "$pidfile" ]; then sudo kill "$(sudo cat "$pidfile")" 2>/dev/null || true; fi
+	done
+	sudo iptables -t nat -D POSTROUTING -s "$net.0/24" ! -o "$bridge" -j MASQUERADE 2>/dev/null || true
+	sudo iptables -D FORWARD -i "$bridge" -j ACCEPT 2>/dev/null || true
+	sudo iptables -D FORWARD -o "$bridge" -j ACCEPT 2>/dev/null || true
+	sudo ip link del "$tap" 2>/dev/null || true
+	sudo ip link del "$bridge" 2>/dev/null || true
+}
 
 cleanup() {
 	if [ -n "${KEEP:-}" ]; then
 		echo "kept: VM $vm, TALOSCONFIG=$work/gen/talosconfig talosctl -n ${ip:-?} -e ${ip:-?} ..."
 		return
 	fi
-	tart stop "$vm" >/dev/null 2>&1 || true
-	tart delete "$vm" >/dev/null 2>&1 || true
-	rm -rf "$work"
+	"${backend}_stop"
+	sudo_rm=rm
+	if [ "$backend" = qemu ]; then sudo_rm="sudo rm"; fi
+	$sudo_rm -rf "$work"
 	rm -f "$image"
 }
 trap cleanup EXIT
 
-echo "== VM $vm, Talos $version"
+if [ "$backend" = tart ]; then
+	closed() { ! nc -z -G 3 "$ip" "$1" >/dev/null 2>&1; }
+	pings() { ping -c 2 -t 3 "$ip" >/dev/null 2>&1; }
+else
+	closed() { ! nc -z -w 3 "$ip" "$1" >/dev/null 2>&1; }
+	pings() { ping -c 2 -W 3 "$ip" >/dev/null 2>&1; }
+	# no talosctl on a CI runner: the one of the version under test, from its image
+	talosctl() {
+		docker run --rm --network host -v "$PWD/$work":"$PWD/$work" -e TALOSCONFIG="${TALOSCONFIG:-}" \
+			"ghcr.io/siderolabs/talosctl:$version" "$@"
+	}
+fi
+
+echo "== VM $vm ($backend, $arch), Talos $version"
+"${backend}_stop" 2>/dev/null || true
 rm -rf "$work" && mkdir -p "$work"
-# 6 GB: the image is 3 GB and EPHEMERAL (/var) needs room, or /var/lib never appears
-tart create --linux --disk-size 6 "$vm"
-tart set "$vm" --cpu 2 --memory 2048
-cp "$image" "$HOME/.tart/vms/$vm/disk.img"
-truncate -s 6G "$HOME/.tart/vms/$vm/disk.img"
-mac=$(sed -n 's/.*"macAddress" *: *"\([^"]*\)".*/\1/p' "$HOME/.tart/vms/$vm/config.json")
-tart run --no-graphics "$vm" >"$work/tart.log" 2>&1 &
-ip=$(tart ip "$vm" --wait 120)
+"${backend}_start"
 subnet=${ip%.*}.0/24
 echo "   $ip ($mac)"
 
@@ -55,11 +127,11 @@ tctl machineconfig patch /out/gen/controlplane.yaml --patch @/out/talos.src.yaml
 tctl validate --mode metal --config /out/config.yaml
 
 applied=
-for _ in $(seq 1 30); do
-	if talosctl apply-config --insecure -n "$ip" -e "$ip" -f "$work/config.yaml" >/dev/null 2>&1; then applied=1; break; fi
+for _ in $(seq 1 60); do
+	if talosctl apply-config --insecure -n "$ip" -e "$ip" -f "$PWD/$work/config.yaml" >/dev/null 2>&1; then applied=1; break; fi
 	sleep 4
 done
-[ -n "$applied" ] || { echo "could not apply the config"; exit 1; }
+[ -n "$applied" ] || { echo "could not apply the config"; tail -30 "$work/console.log" 2>/dev/null; exit 1; }
 
 export TALOSCONFIG="$PWD/$work/gen/talosconfig"
 T() { talosctl -n "$ip" -e "$ip" "$@"; }
@@ -97,9 +169,9 @@ for d in kea-dhcp4:/usr/sbin/kea-dhcp4:0000000000002400 unbound:/usr/sbin/unboun
 	else fail "$name: uid '$uid', CapEff '$caps' (wanted non-root, $want)"; fi
 done
 
-ping -c 2 -t 3 "$ip" >/dev/null 2>&1 && pass "WAN side: ping answers" || fail "WAN side: no ping"
+pings && pass "WAN side: ping answers" || fail "WAN side: no ping"
 for port in 53 60123; do
-	nc -z -G 3 "$ip" "$port" >/dev/null 2>&1 && fail "WAN side: tcp $port is open" || pass "WAN side: tcp $port is closed"
+	closed "$port" && pass "WAN side: tcp $port is closed" || fail "WAN side: tcp $port is open"
 done
 
 echo "== $passes passed, $fails failed"

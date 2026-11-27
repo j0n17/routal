@@ -4,6 +4,8 @@ TALOS_VERSION ?= v1.15.0-beta.0
 ARCH          ?= arm64
 GO_IMAGE      ?= golang:1.26
 OUT           ?= _out
+# the VM of vm-test has the architecture of the machine it runs on
+VM_ARCH       ?= $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,amd64)
 
 GO = docker run --rm -v "$(CURDIR)":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src $(GO_IMAGE)
 
@@ -71,9 +73,9 @@ image: extension ## build a Talos metal disk image with the extension: $(OUT)/me
 	docker run --rm -i --privileged -v "$(CURDIR)/$(OUT)":/out -v /dev:/dev \
 		ghcr.io/siderolabs/imager:$(TALOS_VERSION) - < $(OUT)/profile.yaml
 
-vm-test: ## boot Talos TALOS_VERSION with the extension in a tart VM (Apple silicon) and check the daemons there; removes the VM and the image
-	$(MAKE) image ARCH=arm64
-	hack/vm-test.sh $(TALOS_VERSION) $(OUT)
+vm-test: ## boot Talos TALOS_VERSION with the extension in a VM (tart on an Apple silicon Mac, QEMU with sudo on Linux) and check the daemons there; removes the VM and the image
+	$(MAKE) image ARCH=$(VM_ARCH)
+	hack/vm-test.sh $(TALOS_VERSION) $(OUT) $(VM_ARCH)
 
 clean:
 	rm -f $(OUT)/*.tar $(OUT)/*.raw $(OUT)/*.yaml
