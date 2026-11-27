@@ -16,6 +16,7 @@ make site          # the web page (reference, examples, personas), published by 
 make integration   # data plane in network namespaces: router, LAN clients, NAS VLAN, WAN host, VPN peer
 make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
 make vm-test       # a real Talos VM with the extension, then the personas
+make vm            # the same VM without the personas, left running (make vm-apply, make vm-stop)
 ```
 
 `test/variants/` holds router configs that exercise the options the examples do not, and invalid

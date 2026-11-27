@@ -8,7 +8,8 @@
 # port from outside after each persona, takes the homelab through a reboot and a WAN outage, then
 # runs test/vm/advanced.sh: boots in bad conditions, the safe apply, and exhaustion.
 # The VM, its disk and the image are removed at the end (KEEP=1 keeps the VM and says how to reach it).
-# Usage: hack/vm-test.sh <talos version> <out dir> <arch>      (make vm-test)
+# QUICK=1 skips the personas; STOP=1 removes a VM kept by KEEP=1. make vm is KEEP=1 QUICK=1.
+# Usage: hack/vm-test.sh <talos version> <out dir> <arch>      (make vm-test, make vm, make vm-stop)
 set -eu
 version=$1 out=$2 arch=$3
 vm=routal-vmtest
@@ -22,7 +23,7 @@ esac
 for tool in $tools; do
 	command -v "$tool" >/dev/null || { echo "vm-test needs $tool"; exit 1; }
 done
-[ -f "$image" ] || { echo "$image is missing: make image ARCH=$arch TALOS_VERSION=$version"; exit 1; }
+[ -n "${STOP:-}" ] || [ -f "$image" ] || { echo "$image is missing: make image ARCH=$arch TALOS_VERSION=$version"; exit 1; }
 
 # The image is 3 GB on arm64 and more on amd64 (a BOOT partition for GRUB), and EPHEMERAL (/var)
 # needs room after it, or /var/lib never appears and the extension waits for it.
@@ -169,9 +170,26 @@ qemu_stop() {
 	sudo ip link del "$bridge" 2>/dev/null || true
 }
 
+if [ -n "${STOP:-}" ]; then
+	"${backend}_stop" 2>/dev/null || true
+	if [ "$backend" = qemu ]; then sudo rm -rf "$work"; else rm -rf "$work"; fi
+	rm -f "$image"
+	echo "VM $vm removed"
+	exit 0
+fi
+
 cleanup() {
 	if [ -n "${KEEP:-}" ]; then
-		echo "kept: VM $vm, TALOSCONFIG=$work/gen/talosconfig talosctl -n ${ip:-?} -e ${ip:-?} ..."
+		echo "${ip:-}" >"$work/ip"
+		cat <<KEPT
+
+The VM $vm runs at ${ip:-?}, configured with $work/talos.yaml and $work/router.yaml.
+  export TALOSCONFIG=$PWD/$work/gen/talosconfig
+  talosctl -n ${ip:-?} -e ${ip:-?} services          # ext-routald among them
+  talosctl -n ${ip:-?} -e ${ip:-?} logs -f ext-routald
+  make vm-apply                            # after editing $work/router.yaml
+  make vm-stop                             # removes the VM
+KEPT
 		return
 	fi
 	"${backend}_stop"
@@ -451,7 +469,7 @@ SCRIPT
 		fi
 	fi
 
-	if [ -z "${UPGRADE_TO:-}" ]; then
+	if [ -z "${UPGRADE_TO:-}" ] && [ -z "${QUICK:-}" ]; then
 	for dir in test/vm/personas/*/; do
 		echo "== persona $(basename "$dir" | sed 's/^[0-9]*-//'): $(sed -n '1s/^# *//p' "$dir/router.yaml")"
 		play "$dir"

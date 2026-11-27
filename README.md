@@ -20,6 +20,29 @@ machine, and the `routald` system extension turns it into a router.
 | ingress firewall for the router itself | DHCP, caching DNS with blocklists, IPv6 RA, NTP, mDNS |
 | A/B upgrades, `apply-config --mode try` | health report, apply with automatic rollback |
 
+## Quickstart: a router in a VM
+
+Needs Docker and `talosctl`, plus [tart](https://tart.run) on an Apple silicon Mac, or QEMU with
+KVM and sudo on Linux.
+
+```sh
+make vm          # builds Talos with routald, boots it in a VM, configures it, leaves it running
+```
+
+It prints the VM's address. Then:
+
+```sh
+export TALOSCONFIG=$PWD/_out/vm-test/gen/talosconfig
+talosctl -n <ip> -e <ip> logs -f ext-routald
+
+$EDITOR _out/vm-test/router.yaml
+make vm-apply    # rolled back by Talos unless the router reports healthy
+make vm-stop     # removes the VM
+```
+
+On a Mac the VM has one NIC, the WAN, and the Mac is on the Internet side of it. On Linux it also
+has a LAN with a client behind it: `sudo ip netns exec routal-client sh`.
+
 ## A router is a directory in git
 
 ```

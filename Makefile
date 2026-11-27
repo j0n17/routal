@@ -11,7 +11,7 @@ VM_ARCH       ?= $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,amd64)
 
 GO = docker run --rm -v "$(CURDIR)":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src $(GO_IMAGE)
 
-.PHONY: test check check-talos vm-test vm-upgrade-test cover schema fuzz integration clab extension installer push-installer image clean
+.PHONY: test check check-talos vm vm-apply vm-stop vm-test vm-upgrade-test cover schema fuzz integration clab extension installer push-installer image clean
 
 test: ## run unit tests (in Docker)
 	$(GO) sh -c 'test -z "$$(gofmt -l .)" && go vet ./... && go test ./...'
@@ -94,6 +94,19 @@ image: extension ## build a Talos metal disk image with the extension: $(OUT)/me
 vm-test: ## boot Talos TALOS_VERSION with the extension in a VM (tart on an Apple silicon Mac, QEMU with sudo on Linux) and check the daemons there; removes the VM and the image
 	$(MAKE) image ARCH=$(VM_ARCH)
 	hack/vm-test.sh $(TALOS_VERSION) $(OUT) $(VM_ARCH)
+
+vm: ## quickstart: Talos with routald in a VM (tart on an Apple silicon Mac, QEMU with sudo on Linux), configured with test/vm and left running
+	$(MAKE) image ARCH=$(VM_ARCH)
+	KEEP=1 QUICK=1 hack/vm-test.sh $(TALOS_VERSION) $(OUT) $(VM_ARCH)
+
+vm-apply: ## apply a router.yaml to the VM of make vm with bin/routal-apply (rolled back unless healthy): CONFIG=, default $(OUT)/vm-test/router.yaml
+	mkdir -p $(OUT)/vm-test/apply
+	ip=$$(cat $(OUT)/vm-test/ip) && TALOSCONFIG="$(CURDIR)/$(OUT)/vm-test/gen/talosconfig" TALOSCTL="talosctl -n $$ip -e $$ip" \
+		ROUTALD="docker run --rm -i -v $(CURDIR):$(CURDIR) -w $(CURDIR) $(GO_IMAGE) $(CURDIR)/$(OUT)/vm-test/routald" \
+		ROUTAL_APPLY_DIR="$(CURDIR)/$(OUT)/vm-test/apply" bin/routal-apply $(or $(CONFIG),$(OUT)/vm-test/router.yaml)
+
+vm-stop: ## remove the VM of make vm, its disk and the image
+	STOP=1 hack/vm-test.sh $(TALOS_VERSION) $(OUT) $(VM_ARCH)
 
 vm-upgrade-test: ## Linux: boot the build of test/vm/upgrade-from, upgrade it to this one with talosctl upgrade, check that the state is kept
 	hack/vm-upgrade.sh $(TALOS_VERSION) $(OUT) $(VM_ARCH)
