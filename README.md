@@ -210,6 +210,50 @@ user, applied the way a user would, with what that user expects to work and not 
 | Persona | Expects |
 |---|---|
 | `01-family` | Internet and DNS for every device, ad domains blocked, nothing reachable from outside |
+| `02-family-parental` | sites blocked by name; the children's devices cannot use another resolver, the parents' can |
+| `03-gamer` | a game opens its port with UPnP and is reachable on it; it cannot open one for another device |
+| `04-homelab` | a NAS and a web server with fixed addresses and names, each published on its port; the whole LAN over WireGuard |
+| `05-guests` | visitors on their own VLAN get the Internet, and reach neither the house nor the router's API |
+| `06-hotel` | guests get tcp 80 and 443 through the hotel's DNS and nothing else; the staff network is unrestricted and out of reach |
+
+### Releases
+
+A tag `vX.Y.Z` publishes (`.github/workflows/release.yml`) the installer with the extension for
+every tested Talos version, amd64 and arm64, as
+`ghcr.io/<owner>/routal-installer:<X.Y.Z>-talos-<talos version>`, and the extension tarballs on a
+GitHub release. Supported Talos: 1.14 and later.
+
+## Tests
+
+```sh
+make test          # unit tests, gofmt, go vet, config variants (valid and invalid)
+make check         # + every example and variant checked by the real tools: nft -c, kea -t,
+                   #   unbound-checkconf, radvd -c, chronyd -p, inadyn --check-config, talosctl validate
+make cover         # coverage of the unit tests and of an instrumented routald in make integration
+make schema        # regenerate the JSON schema of router.yaml after changing pkg/config (make test fails when it is stale)
+make fuzz          # fuzz the parsers and the config (FUZZTIME=1m per target); the real tools check what is rendered
+make integration   # data plane in network namespaces: router, LAN clients, NAS VLAN, WAN host, VPN peer
+make clab          # the same checks on a containerlab topology (test/clab/routal.clab.yml)
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs `make check`, `make integration`, `make fuzz
+FUZZTIME=30s` and builds the extension for amd64 and arm64 on every push and pull request.
+It also validates the examples and builds the installer for every Talos version listed by
+`hack/talos-versions.sh` (the one pinned in the Makefile, and the newest release of every minor
+from 1.14 on), on every push and every Monday. For one version locally:
+`make check-talos installer TALOS_VERSION=v1.15.0-beta.0`.
+
+`make vm-test` boots that Talos with the extension in a VM (tart on an Apple silicon Mac; QEMU
+with KVM and sudo on Linux, which is what CI runs for every version), applies `test/vm`, and
+checks what only a real Talos shows: the extension starts, every daemon runs under its account
+with its capabilities, and the WAN side is closed. On Linux the VM has a second NIC with a client
+behind it: DHCP lease, SLAAC, DNS over TLS with DNSSEC, and the Internet through the router.
+It then plays personas (`test/vm/personas`): each is a complete `router.yaml` for one kind of
+user, applied the way a user would, with what that user expects to work and not to work.
+
+| Persona | Expects |
+|---|---|
+| `01-family` | Internet and DNS for every device, ad domains blocked, nothing reachable from outside |
 | `02-gamer` | a game opens its port with UPnP and is reachable on it; it cannot open one for another device |
 | `03-homelab` | the NAS keeps its address and its name; one of its ports is published, the others are not |
 | `04-guests` | visitors on their own VLAN get the Internet, and reach neither the house nor the router's API |

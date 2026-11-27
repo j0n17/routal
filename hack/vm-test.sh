@@ -15,7 +15,7 @@ image=$out/metal-$arch.raw
 
 case $(uname -s) in
 Darwin) backend=tart tools="tart talosctl docker nc ping" ;;
-*) backend=qemu tools="docker nc ping sudo dnsmasq ip iptables qemu-system-x86_64 busybox dig socat upnpc" ;;
+*) backend=qemu tools="docker nc ping sudo dnsmasq ip iptables qemu-system-x86_64 busybox dig socat upnpc wg" ;;
 esac
 for tool in $tools; do
 	command -v "$tool" >/dev/null || { echo "vm-test needs $tool"; exit 1; }
@@ -47,9 +47,14 @@ tart_stop() {
 # The WAN network is a documentation range, not a private one: miniupnpd refuses to map ports
 # behind a private WAN address.
 bridge=br-routal tap=tap-routal net=203.0.113
-lanbridge=br-routal-lan lantap=tap-routal-lan client=routal-client guest=routal-guest
+lanbridge=br-routal-lan lantap=tap-routal-lan client=routal-client guest=routal-guest remote=routal-remote
 qemu_start() {
 	mac=52:54:00:d4:00:32 lanmac=52:54:00:d4:00:33 ip=$net.50
+	# WireGuard keys of the router (a file talos.yaml refers to) and of a laptop on the road
+	mkdir -p "$work/secrets"
+	wg genkey >"$work/secrets/wg0.key"
+	wg genkey >"$work/remote.key"
+	wgpeer=$(wg pubkey <"$work/remote.key")
 	cp "$image" "$work/disk.img"
 	truncate -s "${disk_gb}G" "$work/disk.img"
 	sudo ip link add "$bridge" type bridge
@@ -67,10 +72,11 @@ qemu_start() {
 	sudo ip netns exec "$client" ip link set lan0 address 52:54:00:d4:00:40 # the static lease of 03-homelab
 	sudo ip netns exec "$client" ip link set lo up
 	sudo ip netns exec "$client" ip link set lan0 up
-	# a visitor: on the same switch, in VLAN 20
+	# a second machine on the same switch: a LAN device on trunk0, or a visitor in VLAN 20 on guest0
 	sudo ip netns add "$guest"
 	sudo ip link add veth-routal-g type veth peer name trunk0 netns "$guest"
 	sudo ip link set veth-routal-g master "$lanbridge" up
+	sudo ip netns exec "$guest" ip link set trunk0 address 52:54:00:d4:00:41 # a static lease of 04-homelab
 	sudo ip netns exec "$guest" ip link add link trunk0 name guest0 type vlan id 20
 	sudo ip netns exec "$guest" ip link set lo up
 	sudo ip netns exec "$guest" ip link set trunk0 up
@@ -102,6 +108,16 @@ qemu_start() {
 	# this host is on the WAN side: what it sends to the LANs goes to the router, as from the Internet
 	sudo ip route add 192.168.50.0/24 via "$ip"
 	sudo ip route add 192.168.60.0/24 via "$ip"
+	# a laptop on the road: its tunnel goes through this host's WAN side, its traffic through the tunnel only
+	sudo ip netns add "$remote"
+	sudo ip link add wg-routal type wireguard
+	sudo wg set wg-routal private-key "$work/remote.key" peer "$(wg pubkey <"$work/secrets/wg0.key")" \
+		endpoint "$ip:51820" allowed-ips 10.8.0.0/24,192.168.50.0/24 persistent-keepalive 5
+	sudo ip link set wg-routal netns "$remote"
+	sudo ip netns exec "$remote" ip link set lo up
+	sudo ip netns exec "$remote" ip addr add 10.8.0.2/24 dev wg-routal
+	sudo ip netns exec "$remote" ip link set wg-routal up
+	sudo ip netns exec "$remote" ip route add 192.168.50.0/24 dev wg-routal
 }
 qemu_stop() {
 	for pidfile in "$work/qemu.pid" "$work/dnsmasq.pid"; do
@@ -112,7 +128,7 @@ qemu_stop() {
 	sudo iptables -D FORWARD -o "$bridge" -j ACCEPT 2>/dev/null || true
 	sudo iptables -D FORWARD -i "$lanbridge" -j ACCEPT 2>/dev/null || true
 	sudo ip6tables -D FORWARD -i "$lanbridge" -j ACCEPT 2>/dev/null || true
-	for ns in "$client" "$guest"; do
+	for ns in "$client" "$guest" "$remote"; do
 		sudo ip netns pids "$ns" 2>/dev/null | xargs -r sudo kill 2>/dev/null || true
 		sudo ip netns del "$ns" 2>/dev/null || true
 	done
@@ -160,7 +176,7 @@ echo "   $ip ($mac)"
 echo "== config"
 lan=test/vm/lan-dummy.yaml
 if [ "$backend" = qemu ]; then lan=test/vm/lan-nic.yaml; fi
-cat test/vm/talos.yaml "$lan" | sed -e "s|\$MAC|$mac|" -e "s|\$LANMAC|${lanmac:-}|" -e "s|\$SUBNET|$subnet|" >"$work/talos.yaml"
+cat test/vm/talos.yaml "$lan" | sed -e "s|\$MAC|$mac|" -e "s|\$LANMAC|${lanmac:-}|" -e "s|\$WGPEER|${wgpeer:-}|" -e "s|\$SUBNET|$subnet|" >"$work/talos.yaml"
 sed -e "s|\$SUBNET|$subnet|" test/vm/router.yaml >"$work/router.yaml"
 docker run --rm -v "$PWD":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src golang:1.26 sh -c "
 	go build -buildvcs=false -o $work/routald ./cmd/routald &&
@@ -224,6 +240,7 @@ if [ "$backend" = qemu ]; then
 	echo "== a client behind the router (network namespace on the LAN bridge)"
 	C() { sudo ip netns exec "$client" "$@"; }
 	G() { sudo ip netns exec "$guest" "$@"; }
+	R() { sudo ip netns exec "$remote" "$@"; }
 	D() { C dig +time=5 +tries=2 @192.168.50.1 "$@"; }
 	cat >"$work/udhcpc.sh" <<'SCRIPT'
 #!/bin/sh
@@ -236,16 +253,18 @@ SCRIPT
 	chmod +x "$work/udhcpc.sh"
 	# dhcp <netns> <ifname>: gives up the address it has, asks for a lease, prints its address
 	dhcp() {
-		sudo ip netns exec "$1" ip -4 addr flush dev "$2"
+		sudo ip netns exec "$1" ip -4 addr flush scope global
 		sudo rm -f "$work/lease"
 		sudo ip netns exec "$1" busybox udhcpc -i "$2" -n -q -t 8 -T 2 -O ntpsrv -O domain -s "$PWD/$work/udhcpc.sh" >"$work/udhcpc.log" 2>&1 || true
 		sed -n 's/^ip=\([^ ]*\) .*/\1/p' "$work/lease" 2>/dev/null || true
 	}
 	# ask <address> <port>: what a TCP server answers to this host (the WAN side), nothing when blocked
 	ask() { timeout 8 socat -t 3 -T 5 - "TCP4:$1:$2,connect-timeout=3" </dev/null 2>/dev/null || true; }
-	# every device runs a small server on 8080 that says who it is
-	C socat TCP4-LISTEN:8080,fork,reuseaddr SYSTEM:'echo device' >/dev/null 2>&1 &
-	G socat TCP4-LISTEN:8080,fork,reuseaddr SYSTEM:'echo visitor' >/dev/null 2>&1 &
+	# askfrom <netns> <address> <port>: the same from a machine of the test
+	askfrom() { sudo ip netns exec "$1" timeout 8 socat -t 3 -T 5 - "TCP4:$2:$3,connect-timeout=3" </dev/null 2>/dev/null || true; }
+	# both machines behind the router run a small server on 8080 that says which one it is
+	C socat TCP4-LISTEN:8080,fork,reuseaddr SYSTEM:'echo first' >/dev/null 2>&1 &
+	G socat TCP4-LISTEN:8080,fork,reuseaddr SYSTEM:'echo second' >/dev/null 2>&1 &
 	dhcp "$client" lan0 >/dev/null
 	lease=$(cat "$work/lease" 2>/dev/null || true)
 	case $lease in

@@ -1,4 +1,5 @@
-# A homelab: a NAS with a fixed address and a name, one of its ports published to the Internet.
+# A hotel: guests get the web (tcp 80 and 443) through the hotel's DNS, and nothing else: no other
+# port, no other resolver, no way to the staff network. The staff network is not restricted.
 apiVersion: v1alpha1
 kind: FirewallZoneConfig
 name: wan
@@ -8,6 +9,11 @@ apiVersion: v1alpha1
 kind: FirewallZoneConfig
 name: lan
 links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: guest
+links: [guest0]
 ---
 apiVersion: v1alpha1
 kind: FirewallRuleConfig
@@ -31,6 +37,30 @@ to: self
 protocol: tcp
 ports: [53]
 ---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: guest-web
+from: guest
+to: wan
+protocol: tcp
+ports: [80, 443]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: guest-dns-dhcp
+from: guest
+to: self
+protocol: udp
+ports: [53, 67]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: guest-dns-tcp
+from: guest
+to: self
+protocol: tcp
+ports: [53]
+---
 # The test drives the router from its WAN side: without this rule it locks itself out.
 apiVersion: v1alpha1
 kind: FirewallRuleConfig
@@ -48,36 +78,28 @@ outLink: wan0
 sourceSubnets: [192.168.50.0/24]
 ---
 apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: guest-out
+outLink: wan0
+sourceSubnets: [192.168.60.0/24]
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: guest
+link: guest0
+rangeStart: 192.168.60.100
+rangeEnd: 192.168.60.200
+---
+apiVersion: v1alpha1
 kind: DHCPServerConfig
 name: lan
 link: lan0
 rangeStart: 192.168.50.100
 rangeEnd: 192.168.50.200
 domain: home.arpa
-staticLeases:
-  - mac: 52:54:00:d4:00:40
-    address: 192.168.50.10
-    hostname: nas
 ---
 apiVersion: v1alpha1
 kind: DNSServerConfig
-listenLinks: [lan0]
+listenLinks: [lan0, guest0]
 upstreams: [9.9.9.9, 149.112.112.112]
 localDomain: home.arpa
----
-apiVersion: v1alpha1
-kind: PortForwardConfig
-name: nas-web
-inLink: wan0
-protocol: tcp
-ports: [8080]
-toAddress: 192.168.50.10
----
-apiVersion: v1alpha1
-kind: FirewallRuleConfig
-name: wan-to-nas-web
-from: wan
-to: lan
-protocol: tcp
-ports: [8080]
-destinationSubnets: [192.168.50.10/32]

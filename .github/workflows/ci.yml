@@ -130,7 +130,8 @@ jobs:
       - name: VM tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q qemu-system-x86 ovmf dnsmasq-base netcat-openbsd busybox-static bind9-dnsutils socat miniupnpc
+          sudo apt-get install -y -q qemu-system-x86 ovmf dnsmasq-base netcat-openbsd busybox-static bind9-dnsutils socat miniupnpc wireguard-tools
+          sudo modprobe wireguard
       - name: Boot test
         run: make vm-test TALOS_VERSION=${{ matrix.talos }} 2>&1 | tee ci.log
       - name: Failure summary

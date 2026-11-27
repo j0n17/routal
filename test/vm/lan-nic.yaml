@@ -23,3 +23,17 @@ parent: lan0
 up: true
 addresses:
   - address: 192.168.60.1/24
+---
+# remote access (persona 04-homelab): the peer is the test's laptop on the road
+apiVersion: v1alpha1
+kind: WireguardConfig
+name: wg0
+privateKeyFile: secrets/wg0.key
+listenPort: 51820
+peers:
+  - publicKey: $WGPEER
+    allowedIPs:
+      - 10.8.0.2/32
+up: true
+addresses:
+  - address: 10.8.0.1/24

@@ -1,5 +1,9 @@
 # shellcheck shell=sh
-# Sourced by hack/vm-test.sh (helpers: C, G, D, dhcp, ask, pass, fail; $ip is the router's WAN address).
+# Sourced by hack/vm-test.sh. Helpers: C runs a command on the first device of the LAN, G on the
+# second machine (a LAN device on trunk0, or a visitor on the VLAN guest0), R on the remote laptop;
+# dhcp <netns> <link> prints the address of a new lease; ask <address> <port> and askfrom <netns>
+# <address> <port> print what a TCP server answers, nothing when blocked; $ip is the router's WAN
+# address; pass and fail record a result.
 lease=$(dhcp "$client" lan0)
 [ -n "$lease" ] && pass "a device of the house gets an address: $lease" || fail "the device got no lease"
 glease=$(dhcp "$guest" guest0)

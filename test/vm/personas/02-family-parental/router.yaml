@@ -1,0 +1,97 @@
+# A family with children: sites are blocked by name, and the children's devices cannot go around
+# the filter with another resolver. (DNS over HTTPS on port 443 looks like any website: only a
+# list of resolver names in `blocking` can stop that.)
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+# The children's devices: fixed addresses (static leases below).
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: kids
+subnets: [192.168.50.20/32]
+---
+# Before lan-to-wan: rules are read in order.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: kids-no-other-dns
+from: lan
+to: wan
+protocol: udp
+ports: [53, 853]
+sourceGroups: [kids]
+action: block
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: kids-no-other-dns-tcp
+from: lan
+to: wan
+protocol: tcp
+ports: [53, 853]
+sourceGroups: [kids]
+action: block
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-to-wan
+from: lan
+to: wan
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-dhcp
+from: lan
+to: self
+protocol: udp
+ports: [53, 67]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-tcp
+from: lan
+to: self
+protocol: tcp
+ports: [53]
+---
+# The test drives the router from its WAN side: without this rule it locks itself out.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: admin-from-host
+from: wan
+to: self
+protocol: tcp
+ports: [50000]
+sourceSubnets: [$SUBNET]
+---
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: lan-out
+outLink: wan0
+sourceSubnets: [192.168.50.0/24]
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+rangeStart: 192.168.50.100
+rangeEnd: 192.168.50.200
+domain: home.arpa
+staticLeases:
+  - mac: 52:54:00:d4:00:40
+    address: 192.168.50.20
+    hostname: tablet
+---
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+upstreams: [9.9.9.9, 149.112.112.112]
+localDomain: home.arpa
+blocking:
+  domains: [doubleclick.net, tiktok.com]
