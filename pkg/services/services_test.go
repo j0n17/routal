@@ -361,5 +361,17 @@ func TestServiceAccounts(t *testing.T) {
 		if s.User == "" || s.User == "root" || s.Dir == "" {
 			t.Errorf("%s runs as %q in %q", s.Name, s.User, s.Dir)
 		}
+
+		// what a daemon has compiled in under /run, which is root's on Talos
+		switch s.Name {
+		case "avahi-daemon":
+			if len(s.OwnDirs) != 1 || s.OwnDirs[0] != services.AvahiRunDir {
+				t.Errorf("avahi-daemon: OwnDirs = %v", s.OwnDirs)
+			}
+		case "chronyd":
+			if !strings.Contains(s.Config, "\ncmdport 0\nbindcmdaddress /\n") {
+				t.Errorf("chronyd keeps a command socket:\n%s", s.Config)
+			}
+		}
 	}
 }

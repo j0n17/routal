@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -505,6 +506,16 @@ func TestSupervisorDropsRoot(t *testing.T) {
 
 	_ = os.Chmod(base, 0o755)
 	dirs := services.Dirs{State: filepath.Join(base, "state"), Run: filepath.Join(base, "run")}
+	// as Talos creates them: the mount sources of the extension are root only, and the runtime
+	// directory is below one of them
+	dirs.Run = filepath.Join(base, "run", "routal")
+
+	for _, dir := range []string{dirs.State, filepath.Join(base, "run")} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	s := newSupervisor(dirs)
 	out := filepath.Join(dirs.Data("job"), "out")
 
@@ -513,6 +524,8 @@ func TestSupervisorDropsRoot(t *testing.T) {
 		Command: []string{"/bin/sh", "-c", "{ id -u; grep CapEff /proc/self/status; cat {conf}; } > " + out + "; exec sleep 60"},
 		Test:    []string{"/bin/sh", "-c", "test $(id -u) != 0 && test -r {conf}"},
 		User:    "nobody", Dir: "job", Caps: []uintptr{services.CapNetBindService},
+		// a directory the daemon has compiled in, below a root-only one as well
+		OwnDirs: []string{filepath.Join(base, "run", "compiled-in")},
 	}
 
 	if err := s.reconcile([]services.Service{svc}); err != nil {
@@ -543,6 +556,19 @@ func TestSupervisorDropsRoot(t *testing.T) {
 		t.Errorf("data directory mode = %v, want 0750", st.Mode().Perm())
 	}
 
+	// root's directories let the account through, without becoming writable for it
+	for dir, want := range map[string]os.FileMode{
+		dirs.State: 0o755, dirs.Run: 0o755, filepath.Join(base, "run"): 0o711, svc.OwnDirs[0]: 0o750,
+	} {
+		if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != want {
+			t.Errorf("%s: mode %v, want %v (%v)", dir, st.Mode().Perm(), want, err)
+		}
+	}
+
+	if st, err := os.Stat(svc.OwnDirs[0]); err != nil || st.Sys().(*syscall.Stat_t).Uid != 65534 {
+		t.Errorf("%s does not belong to the account (%v)", svc.OwnDirs[0], err)
+	}
+
 	// an account that does not exist: the daemon is not started as root instead
 	svc.Name, svc.User = "ghost", "no-such-account"
 	if err := s.reconcile([]services.Service{svc}); err == nil || s.generation("ghost") != 0 {
@@ -570,5 +596,42 @@ func TestLeaseNamesReserved(t *testing.T) {
 
 	if got := calls(t, log); strings.Contains(got, "wpad") || !strings.Contains(got, "tv.home.arpa.") {
 		t.Errorf("published:\n%s", got)
+	}
+}
+
+func TestOpenDir(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "a", "b"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// wider than needed already: left as it is
+	if err := os.Mkdir(filepath.Join(base, "a", "b", "wide"), 0o775); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = os.Chmod(filepath.Join(base, "a", "b", "wide"), 0o775)
+
+	for _, dir := range []string{filepath.Join(base, "a", "b", "c"), filepath.Join(base, "a", "b", "wide", "d")} {
+		if err := openDir(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for rel, want := range map[string]os.FileMode{
+		"a": 0o711, "a/b": 0o711, "a/b/c": 0o755, "a/b/wide": 0o775, "a/b/wide/d": 0o755,
+	} {
+		if st, err := os.Stat(filepath.Join(base, rel)); err != nil || st.Mode().Perm() != want {
+			t.Errorf("%s: mode %v, want %v (%v)", rel, st.Mode().Perm(), want, err)
+		}
+	}
+
+	// a file in the way
+	if err := os.WriteFile(filepath.Join(base, "file"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := openDir(filepath.Join(base, "file", "x")); err == nil {
+		t.Error("openDir below a file succeeded")
 	}
 }

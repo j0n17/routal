@@ -40,6 +40,9 @@ const (
 // DefaultDirs are the directories inside the extension.
 var DefaultDirs = Dirs{State: "/var/lib/routal", Run: "/run/routal"}
 
+// AvahiRunDir is where avahi-daemon keeps its pid file and socket, whatever its configuration.
+const AvahiRunDir = "/run/avahi-daemon"
+
 // Service is one supervised daemon with its rendered config.
 type Service struct {
 	Name    string
@@ -50,9 +53,11 @@ type Service struct {
 	Env     []string
 	// User is the account the daemon runs as, with Caps as its only capabilities; "" is root. Dir
 	// names its directories (Dirs.Data, Dirs.Runtime), which belong to User.
-	User     string
-	Caps     []uintptr
-	Dir      string
+	User string
+	Caps []uintptr
+	Dir  string
+	// OwnDirs are directories outside Dirs that the daemon has compiled in, created for User.
+	OwnDirs  []string
 	Warnings []string // parts of the config that could not be rendered yet (e.g. link has no address)
 }
 
@@ -118,7 +123,7 @@ func Render(cfg *config.Config, e env.Env, d Dirs) []Service {
 		out = append(out, Service{
 			Name: "avahi-daemon", File: "avahi-daemon.conf", Config: avahi(cfg, e),
 			Command: []string{"/usr/sbin/avahi-daemon", "-f", "{conf}", "--no-drop-root", "--no-chroot", "--no-rlimits"},
-			User:    "avahi", Dir: "avahi",
+			User:    "avahi", Dir: "avahi", OwnDirs: []string{AvahiRunDir},
 		})
 	}
 

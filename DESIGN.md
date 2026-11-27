@@ -106,7 +106,7 @@ the LAN only. Both use the unmodified `examples/home-router` files; the MACs mat
 ## Network namespace and containerlab tests (`make integration`, `make clab`)
 Router, two LAN clients, a NAS on VLAN 30, a WAN host and a WireGuard peer, each in its own network
 namespace in one privileged container; the router runs routald with `examples/nas-vpn` plus a port
-forward and UPnP. 89 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
+forward and UPnP. 90 checks: DHCP (static and dynamic leases, options), SLAAC, DNS (static and
 dynamic names, reverse, forwarding), the NAS matrix in IPv4 and IPv6, masquerade, port forward,
 reflection, UPnP mapping and secure mode, NTP, mDNS across the VLAN. Talos itself is emulated
 (links, addresses, aliases); its ingress firewall is not.
@@ -303,6 +303,7 @@ at it on their first line.
 | Daemon accounts | The supervisor starts each daemon as its own account, with ambient capabilities and no supplementary group: kea-dhcp4 `NET_RAW` + `NET_BIND_SERVICE`, kea-dhcp6, Unbound and chrony `NET_BIND_SERVICE`, radvd `NET_RAW`, miniupnpd `NET_ADMIN` + `NET_RAW` (it writes nftables), Avahi and inadyn none. pppd stays root (it creates the interface and the default route), and so does routald. A daemon whose account is missing is not started. |
 | Files | `/var/lib/routal` and `/run/routal` belong to root. A daemon writes in `<dir>/<account>` only (mode 0750); its config is `root:<group>` 0640. A daemon taken over cannot plant a file where routald writes as root. Leases move to `kea/`: the first start after an upgrade hands out new leases. |
 | WAN closed by default | In `inet routal`, input from the WAN links (`Config.WANLinks`) is dropped after the `to: self` accepts (which match `sourceSubnets`/`sourceGroups` too) and a fixed list: ICMP errors, ping at 10/s, the ICMPv6 of RFC 4890 (ND, RA, MLD, errors), DHCP (67 to 68) and DHCPv6 (fe80::/10 to 546) answers. Talos' own rules match source addresses only: this holds when talos.yaml has no `NetworkDefaultActionConfig` or a rule that is too wide, and covers the Talos API (50000-50001). A router with no WAN link (no masquerade, PPPoE, prefix delegation or UPnP) gets no such drop. |
+| Directories on Talos | Talos creates the extension's mount sources (`/var/lib/routal`, and the container's `/run`) with mode 0700 root. routald opens them (0755, search bit on the ancestors) so that the daemons' accounts reach their config and their own directory, and creates Avahi's compiled-in `/run/avahi-daemon` for its account. Found on a VM on 2026-11-27: every daemon failed with "Permission denied"; the lab now starts routald with the same modes. |
 | UPnP range | Closed on every link, see above. |
 | DHCP names | `wpad`, `isatap` and `localhost` are never published from a lease: a device named wpad would be the proxy of every browser with proxy auto-discovery. Static leases and local records can use them. |
 | DNSSEC | `dnssec: true`: Unbound's validator with the root keys of the image (`dnssec-root`, both KSK-2017 and KSK-2024). Off by default: an upstream that drops DNSSEC records (many ISP boxes; not checked for Talos' resolver, the default upstream) makes every answer fail. |
@@ -312,6 +313,18 @@ Checked: the lab (accounts and capabilities read from /proc, the three listeners
 the rendered Unbound config against Quad9 and Cloudflare (a signed name has the `ad` flag,
 dnssec-failed.org is SERVFAIL). Not checked on a Talos VM yet: the accounts rely on the extension
 container having all capabilities, as it does for nftables today.
+
+## Verified (2026-11-27, tart VM, arm64, Talos v1.15.0-beta.0 and v1.14.7)
+- One NIC as the WAN, two dummy links as LANs, `ingress: block`. Kea, Unbound (DNSSEC, DNS over TLS),
+  radvd, chrony, Avahi and miniupnpd run under their accounts with the expected `CapEff`
+  (e.g. Unbound 0x400, Avahi 0); routald stays root.
+- From the WAN side: ping answers, tcp 50000 opens (a `to: self` rule with `sourceSubnets`), 53 and
+  an unused port do not.
+- v1.14.7 behaves the same, with the manifest's `>= v1.15.0-alpha.0` constraint lifted for the test:
+  the constraint is what keeps 1.14 out, not a missing feature this test exercises.
+- The VM disk needs about 6 GB: with 3 GB, EPHEMERAL has no room and `/var/lib` never appears.
+- Not checked there: DNS answers and DHCP leases (no client behind a dummy link).
+- Scripted since as `make vm-test` (hack/vm-test.sh, test/vm): 13 checks.
 
 ## Talos kernel (v1.15.0-beta.0), checked on the VM
 | Feature | Kernel | Consequence |

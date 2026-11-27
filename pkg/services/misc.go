@@ -135,6 +135,7 @@ func chrony(cfg *config.Config, e env.Env, d Dirs) (string, []string) {
 	line("driftfile %s/chrony.drift", d.Data("chrony"))
 	line("pidfile %s/chronyd.pid", d.Runtime("chrony"))
 	line("cmdport 0")
+	line("bindcmdaddress /") // no command socket either: its compiled-in directory is root's
 
 	return b.String(), warn
 }

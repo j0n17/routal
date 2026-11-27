@@ -124,7 +124,8 @@ nsx router sh -c "sed -e 's/upstreams: \[9.9.9.9, 2620:fe::fe\]/upstreams: [203.
 nsx router routald validate /tmp/router.yaml || exit 1
 # COVER=1: the coverage-instrumented routald, counters written to /cover when it stops
 if [ -n "${COVER:-}" ]; then ROUTALD="env GOCOVERDIR=/cover routald-cover"; else ROUTALD=routald; fi
-bg router "mkdir -p /cover && $ROUTALD run -config /tmp/router.yaml > /tmp/routald.log 2>&1"
+# Talos creates routald's two directories (the extension's mount sources) with mode 0700
+bg router "mkdir -p /cover && chmod 700 /run && mkdir -p -m 700 /var/lib/routal && $ROUTALD run -config /tmp/router.yaml > /tmp/routald.log 2>&1"
 wait_for 20 nsx router nft list table inet routal || { nsx router cat /tmp/routald.log; exit 1; }
 wait_for 20 nsx router test -f /var/lib/routal/unbound.conf
 
@@ -229,6 +230,10 @@ owners=$(for p in $kids; do echo "$(cat "/proc/$p/comm")=$(stat -c %U "/proc/$p"
 upid=$(for p in $kids; do [ "$(cat "/proc/$p/comm")" = unbound ] && echo "$p"; done | head -1)
 caps=$(sed -n 's/^CapEff:[[:space:]]*//p' "/proc/$upid/status")
 [ "$caps" = 0000000000000400 ] && pass "unbound only keeps CAP_NET_BIND_SERVICE" || fail "unbound capabilities: $caps (pid $upid)"
+# with Talos' modes on routald's directories (see where it starts), no daemon was refused a file;
+# radvd's hop limit sysctl is the one thing an account cannot write, and RAs carry it anyway
+denied=$(nsx router grep -a -E 'Permission denied|config rejected' /tmp/routald.log | grep -v CurHopLimit | head -3)
+[ -z "$denied" ] && pass "no daemon was denied a file or had its config rejected" || fail "daemons denied: $denied"
 # listeners on the router itself: one inside the UPnP mapping range, one on the Talos API port
 serve router 30000 router-high
 serve router 50000 talos-api

@@ -136,7 +136,7 @@ func (s *supervisor) reconcile(svcs []services.Service) error {
 
 func (s *supervisor) start(svc services.Service) error {
 	for _, dir := range []string{s.dirs.State, s.dirs.Run} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := openDir(dir); err != nil {
 			return err
 		}
 	}
@@ -251,7 +251,7 @@ func (s *supervisor) identity(svc services.Service) (*syscall.Credential, error)
 		return nil, fmt.Errorf("account %s: %w", svc.User, err)
 	}
 
-	for _, dir := range []string{s.dirs.Data(svc.Dir), s.dirs.Runtime(svc.Dir)} {
+	for _, dir := range append([]string{s.dirs.Data(svc.Dir), s.dirs.Runtime(svc.Dir)}, svc.OwnDirs...) {
 		if err := errors.Join(os.MkdirAll(dir, 0o750), os.Chown(dir, int(uid), int(gid)), os.Chmod(dir, 0o750)); err != nil {
 			return nil, err
 		}
@@ -259,6 +259,31 @@ func (s *supervisor) identity(svc services.Service) (*syscall.Credential, error)
 
 	// no supplementary groups
 	return &syscall.Credential{Uid: uid, Gid: gid}, nil
+}
+
+// openDir creates dir and lets every account list it and get to it. Talos creates the mount
+// sources of the extension (/var/lib/routal, and /run above the runtime directory) with mode 0700:
+// the daemons, which are not root, have to get through them to their config and their own
+// directory. Ancestors only gain the search bit they lack.
+func openDir(dir string) error {
+	if err := errors.Join(os.MkdirAll(dir, 0o755), os.Chmod(dir, 0o755)); err != nil {
+		return err
+	}
+
+	for p := filepath.Dir(dir); p != filepath.Dir(p); p = filepath.Dir(p) {
+		st, err := os.Stat(p)
+		if err != nil {
+			return err
+		}
+
+		if mode := st.Mode().Perm(); mode&0o011 != 0o011 {
+			if err := os.Chmod(p, mode|0o011); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // command builds the command of a daemon or of its config check. With cred, the process leaves
