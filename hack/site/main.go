@@ -183,7 +183,7 @@ body { margin:0; font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helv
 a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
 .layout { display:grid; grid-template-columns:260px minmax(0,1fr); max-width:1280px; margin:0 auto; }
 nav { position:sticky; top:0; align-self:start; height:100vh; overflow:auto; padding:24px 16px; border-right:1px solid var(--line); font-size:14px; }
-nav h1 { font-size:20px; margin:0 0 4px; } nav .logo { display:block; margin:0 0 10px; border-radius:13px; } nav h1 a { display:inline; } nav h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:20px 0 6px; }
+nav h1 { font-size:20px; margin:0 0 4px; } nav .logo { display:block; margin:0 0 10px; } nav h1 a { display:inline; } nav h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:20px 0 6px; }
 nav a { display:block; padding:2px 0; color:var(--fg); } nav a:hover { color:var(--accent); }
 main { padding:32px 40px 80px; min-width:0; }
 h1 { font-size:32px; margin:0 0 8px; } h2 { font-size:24px; margin:48px 0 8px; padding-top:16px; border-top:1px solid var(--line); }
@@ -242,8 +242,8 @@ func main() {
 
 	var nav, body strings.Builder
 
-	nav.WriteString(`<a href="#top"><img class="logo" src="logo.svg" alt="" width="56" height="56"></a>`)
-	nav.WriteString(`<h1><a href="#top">Routal</a></h1><div class="muted">a router on stock Talos Linux</div>`)
+	nav.WriteString(`<a href="#top"><img class="logo" src="logo.svg" alt="Routal" width="180"></a>`)
+	nav.WriteString(`<div class="muted">a router on stock Talos Linux</div>`)
 	nav.WriteString(`<h2>Start</h2><a href="#top">What it is</a><a href="#layout">A router in git</a><a href="#apply">Apply and check</a>`)
 
 	body.WriteString(`<h1 id="top">Routal</h1>
@@ -370,7 +370,7 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Routal: a router on stock Talos Linux</title>
 <meta name="description" content="Reference of router.yaml, example routers and tested personas of Routal, a router built on Talos Linux.">
-<link rel="icon" type="image/svg+xml" href="logo.svg">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
 <style>%s</style></head>
 <body><div class="layout"><nav>%s</nav><main>%s</main></div></body></html>
 `, style, nav.String(), body.String())
@@ -386,7 +386,15 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 		os.Exit(1)
 	}
 
-	for name, content := range map[string][]byte{"index.html": []byte(page), "router.schema.json": raw, "logo.svg": logo, ".nojekyll": nil} {
+	icon, err := os.ReadFile("assets/icon.svg")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	for name, content := range map[string][]byte{
+		"index.html": []byte(page), "router.schema.json": raw, "logo.svg": logo, "icon.svg": icon, ".nojekyll": nil,
+	} {
 		if err := os.WriteFile(filepath.Join(out, name), content, 0o644); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

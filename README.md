@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.svg" width="112" height="112" alt="Routal logo"></p>
+<p align="center"><img src="assets/logo.svg" width="300" alt="routal"></p>
 
 # Routal
 
