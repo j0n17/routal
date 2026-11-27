@@ -1,0 +1,83 @@
+# A homelab: a NAS with a fixed address and a name, one of its ports published to the Internet.
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-to-wan
+from: lan
+to: wan
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-dhcp
+from: lan
+to: self
+protocol: udp
+ports: [53, 67]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-tcp
+from: lan
+to: self
+protocol: tcp
+ports: [53]
+---
+# The test drives the router from its WAN side: without this rule it locks itself out.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: admin-from-host
+from: wan
+to: self
+protocol: tcp
+ports: [50000]
+sourceSubnets: [$SUBNET]
+---
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: lan-out
+outLink: wan0
+sourceSubnets: [192.168.50.0/24]
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+rangeStart: 192.168.50.100
+rangeEnd: 192.168.50.200
+domain: home.arpa
+staticLeases:
+  - mac: 52:54:00:d4:00:40
+    address: 192.168.50.10
+    hostname: nas
+---
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+upstreams: [9.9.9.9, 149.112.112.112]
+localDomain: home.arpa
+---
+apiVersion: v1alpha1
+kind: PortForwardConfig
+name: nas-web
+inLink: wan0
+protocol: tcp
+ports: [8080]
+toAddress: 192.168.50.10
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: wan-to-nas-web
+from: wan
+to: lan
+protocol: tcp
+ports: [8080]
+destinationSubnets: [192.168.50.10/32]

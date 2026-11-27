@@ -204,6 +204,15 @@ with KVM and sudo on Linux, which is what CI runs for every version), applies `t
 checks what only a real Talos shows: the extension starts, every daemon runs under its account
 with its capabilities, and the WAN side is closed. On Linux the VM has a second NIC with a client
 behind it: DHCP lease, SLAAC, DNS over TLS with DNSSEC, and the Internet through the router.
+It then plays personas (`test/vm/personas`): each is a complete `router.yaml` for one kind of
+user, applied the way a user would, with what that user expects to work and not to work.
+
+| Persona | Expects |
+|---|---|
+| `01-family` | Internet and DNS for every device, ad domains blocked, nothing reachable from outside |
+| `02-gamer` | a game opens its port with UPnP and is reachable on it; it cannot open one for another device |
+| `03-homelab` | the NAS keeps its address and its name; one of its ports is published, the others are not |
+| `04-guests` | visitors on their own VLAN get the Internet, and reach neither the house nor the router's API |
 It removes the VM and the image when it ends.
 
 Both run the real routald and daemons with `examples/nas-vpn` and the same 90 checks

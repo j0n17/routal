@@ -13,3 +13,13 @@ up: true
 addresses:
   - address: 192.168.50.1/24
   - address: fd00:50::1/64
+---
+# the guests' VLAN (persona 04-guests), tagged on the LAN NIC
+apiVersion: v1alpha1
+kind: VLANConfig
+name: guest0
+vlanID: 20
+parent: lan0
+up: true
+addresses:
+  - address: 192.168.60.1/24

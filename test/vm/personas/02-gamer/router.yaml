@@ -1,0 +1,67 @@
+# A console player: games open their own ports with UPnP, to their own address only.
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-to-wan
+from: lan
+to: wan
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-dhcp
+from: lan
+to: self
+protocol: udp
+ports: [53, 67]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: lan-dns-tcp
+from: lan
+to: self
+protocol: tcp
+ports: [53]
+---
+# The test drives the router from its WAN side: without this rule it locks itself out.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: admin-from-host
+from: wan
+to: self
+protocol: tcp
+ports: [50000]
+sourceSubnets: [$SUBNET]
+---
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: lan-out
+outLink: wan0
+sourceSubnets: [192.168.50.0/24]
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: lan
+link: lan0
+rangeStart: 192.168.50.100
+rangeEnd: 192.168.50.200
+domain: home.arpa
+---
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0]
+upstreams: [9.9.9.9, 149.112.112.112]
+localDomain: home.arpa
+---
+apiVersion: v1alpha1
+kind: UPnPConfig
+externalLink: wan0
+internalLinks: [lan0]

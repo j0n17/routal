@@ -3,7 +3,8 @@
 # only a real Talos shows: the extension starts, every daemon runs under its account with its
 # capabilities, and the WAN side is closed. On macOS (Apple silicon) the VM is a tart VM; on Linux
 # it is QEMU with KVM, with dnsmasq as the ISP and a client behind the router's second NIC (needs
-# sudo; this is what CI runs).
+# sudo; this is what CI runs). There it then plays the personas of test/vm/personas, each with its
+# own router.yaml and what that user expects to work, or not to.
 # The VM, its disk and the image are removed at the end (KEEP=1 keeps the VM and says how to reach it).
 # Usage: hack/vm-test.sh <talos version> <out dir> <arch>      (make vm-test)
 set -eu
@@ -14,7 +15,7 @@ image=$out/metal-$arch.raw
 
 case $(uname -s) in
 Darwin) backend=tart tools="tart talosctl docker nc ping" ;;
-*) backend=qemu tools="docker nc ping sudo dnsmasq ip iptables qemu-system-x86_64 busybox dig" ;;
+*) backend=qemu tools="docker nc ping sudo dnsmasq ip iptables qemu-system-x86_64 busybox dig socat upnpc" ;;
 esac
 for tool in $tools; do
 	command -v "$tool" >/dev/null || { echo "vm-test needs $tool"; exit 1; }
@@ -43,8 +44,10 @@ tart_stop() {
 
 # --- QEMU (Linux): a bridge with dnsmasq and NAT plays the ISP, this host is the WAN side
 # The VM's second NIC is the LAN: a bridge with one client on it, a network namespace of this host.
-bridge=br-routal tap=tap-routal net=192.168.212
-lanbridge=br-routal-lan lantap=tap-routal-lan client=routal-client
+# The WAN network is a documentation range, not a private one: miniupnpd refuses to map ports
+# behind a private WAN address.
+bridge=br-routal tap=tap-routal net=203.0.113
+lanbridge=br-routal-lan lantap=tap-routal-lan client=routal-client guest=routal-guest
 qemu_start() {
 	mac=52:54:00:d4:00:32 lanmac=52:54:00:d4:00:33 ip=$net.50
 	cp "$image" "$work/disk.img"
@@ -61,8 +64,17 @@ qemu_start() {
 	sudo ip netns add "$client"
 	sudo ip link add veth-routal type veth peer name lan0 netns "$client"
 	sudo ip link set veth-routal master "$lanbridge" up
+	sudo ip netns exec "$client" ip link set lan0 address 52:54:00:d4:00:40 # the static lease of 03-homelab
 	sudo ip netns exec "$client" ip link set lo up
 	sudo ip netns exec "$client" ip link set lan0 up
+	# a visitor: on the same switch, in VLAN 20
+	sudo ip netns add "$guest"
+	sudo ip link add veth-routal-g type veth peer name trunk0 netns "$guest"
+	sudo ip link set veth-routal-g master "$lanbridge" up
+	sudo ip netns exec "$guest" ip link add link trunk0 name guest0 type vlan id 20
+	sudo ip netns exec "$guest" ip link set lo up
+	sudo ip netns exec "$guest" ip link set trunk0 up
+	sudo ip netns exec "$guest" ip link set guest0 up
 	# Docker's FORWARD policy is drop, and bridged frames go through it when br_netfilter is loaded
 	sudo iptables -I FORWARD -i "$lanbridge" -j ACCEPT
 	sudo ip6tables -I FORWARD -i "$lanbridge" -j ACCEPT 2>/dev/null || true
@@ -87,6 +99,9 @@ qemu_start() {
 		-netdev tap,id=n0,ifname="$tap",script=no,downscript=no -device virtio-net-pci,netdev=n0,mac="$mac" \
 		-netdev tap,id=n1,ifname="$lantap",script=no,downscript=no -device virtio-net-pci,netdev=n1,mac="$lanmac" \
 		-display none -serial file:"$work/console.log" -daemonize -pidfile "$work/qemu.pid"
+	# this host is on the WAN side: what it sends to the LANs goes to the router, as from the Internet
+	sudo ip route add 192.168.50.0/24 via "$ip"
+	sudo ip route add 192.168.60.0/24 via "$ip"
 }
 qemu_stop() {
 	for pidfile in "$work/qemu.pid" "$work/dnsmasq.pid"; do
@@ -97,7 +112,11 @@ qemu_stop() {
 	sudo iptables -D FORWARD -o "$bridge" -j ACCEPT 2>/dev/null || true
 	sudo iptables -D FORWARD -i "$lanbridge" -j ACCEPT 2>/dev/null || true
 	sudo ip6tables -D FORWARD -i "$lanbridge" -j ACCEPT 2>/dev/null || true
-	sudo ip netns del "$client" 2>/dev/null || true
+	for ns in "$client" "$guest"; do
+		sudo ip netns pids "$ns" 2>/dev/null | xargs -r sudo kill 2>/dev/null || true
+		sudo ip netns del "$ns" 2>/dev/null || true
+	done
+	sudo ip link del veth-routal-g 2>/dev/null || true
 	sudo ip link del veth-routal 2>/dev/null || true
 	sudo ip link del "$lantap" 2>/dev/null || true
 	sudo ip link del "$lanbridge" 2>/dev/null || true
@@ -144,10 +163,10 @@ if [ "$backend" = qemu ]; then lan=test/vm/lan-nic.yaml; fi
 cat test/vm/talos.yaml "$lan" | sed -e "s|\$MAC|$mac|" -e "s|\$LANMAC|${lanmac:-}|" -e "s|\$SUBNET|$subnet|" >"$work/talos.yaml"
 sed -e "s|\$SUBNET|$subnet|" test/vm/router.yaml >"$work/router.yaml"
 docker run --rm -v "$PWD":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src golang:1.26 sh -c "
-	go build -buildvcs=false -o /tmp/routald ./cmd/routald &&
-	/tmp/routald validate $work/router.yaml &&
-	/tmp/routald talos-render $work/talos.yaml > $work/talos.src.yaml &&
-	/tmp/routald talos-patch $work/router.yaml > $work/router-patch.yaml"
+	go build -buildvcs=false -o $work/routald ./cmd/routald &&
+	$work/routald validate $work/router.yaml &&
+	$work/routald talos-render $work/talos.yaml > $work/talos.src.yaml &&
+	$work/routald talos-patch $work/router.yaml > $work/router-patch.yaml"
 tctl() { docker run --rm -v "$PWD/$work":/out "ghcr.io/siderolabs/talosctl:$version" "$@"; }
 tctl gen config routal https://192.0.2.1:6443 --skip-k8s-etcd --output-types controlplane,talosconfig -o /out/gen --force >/dev/null
 tctl machineconfig patch /out/gen/controlplane.yaml --patch @/out/talos.src.yaml --patch @/out/router-patch.yaml -o /out/config.yaml
@@ -204,16 +223,30 @@ done
 if [ "$backend" = qemu ]; then
 	echo "== a client behind the router (network namespace on the LAN bridge)"
 	C() { sudo ip netns exec "$client" "$@"; }
+	G() { sudo ip netns exec "$guest" "$@"; }
+	D() { C dig +time=5 +tries=2 @192.168.50.1 "$@"; }
 	cat >"$work/udhcpc.sh" <<'SCRIPT'
 #!/bin/sh
 # udhcpc event script: configures the lease and records it
 [ "$1" = bound ] || exit 0
 ip addr add "$ip/${mask:-24}" dev "$interface"
-ip route add default via "$router"
+ip route replace default via "$router"
 echo "ip=$ip router=$router dns=$dns domain=$domain ntp=$ntpsrv" >"$(dirname "$0")/lease"
 SCRIPT
 	chmod +x "$work/udhcpc.sh"
-	C busybox udhcpc -i lan0 -n -q -t 8 -T 2 -O ntpsrv -O domain -s "$PWD/$work/udhcpc.sh" >"$work/udhcpc.log" 2>&1 || true
+	# dhcp <netns> <ifname>: gives up the address it has, asks for a lease, prints its address
+	dhcp() {
+		sudo ip netns exec "$1" ip -4 addr flush dev "$2"
+		sudo rm -f "$work/lease"
+		sudo ip netns exec "$1" busybox udhcpc -i "$2" -n -q -t 8 -T 2 -O ntpsrv -O domain -s "$PWD/$work/udhcpc.sh" >"$work/udhcpc.log" 2>&1 || true
+		sed -n 's/^ip=\([^ ]*\) .*/\1/p' "$work/lease" 2>/dev/null || true
+	}
+	# ask <address> <port>: what a TCP server answers to this host (the WAN side), nothing when blocked
+	ask() { timeout 8 socat -t 3 -T 5 - "TCP4:$1:$2,connect-timeout=3" </dev/null 2>/dev/null || true; }
+	# every device runs a small server on 8080 that says who it is
+	C socat TCP4-LISTEN:8080,fork,reuseaddr SYSTEM:'echo device' >/dev/null 2>&1 &
+	G socat TCP4-LISTEN:8080,fork,reuseaddr SYSTEM:'echo visitor' >/dev/null 2>&1 &
+	dhcp "$client" lan0 >/dev/null
 	lease=$(cat "$work/lease" 2>/dev/null || true)
 	case $lease in
 	"ip=192.168.50.1"[0-9][0-9]" router=192.168.50.1 dns=192.168.50.1 domain=home.arpa ntp=192.168.50.1") pass "DHCP lease from Kea: $lease" ;;
@@ -226,7 +259,6 @@ SCRIPT
 		sleep 2
 	done
 	[ -n "$slaac" ] && pass "SLAAC address from radvd: $slaac" || fail "no SLAAC address: $(C ip -6 -o addr show dev lan0)"
-	D() { C dig +time=5 +tries=2 @192.168.50.1 "$@"; }
 	answer=$(D +short example.com A | head -1)
 	[ -n "$answer" ] && pass "DNS through Unbound (DNS over TLS upstream): example.com -> $answer" || fail "DNS: $(D example.com A | tail -5 | tr '\n' ' ')"
 	D +dnssec example.com A | grep -q 'flags:[^;]* ad[ ;]' && pass "DNSSEC: a signed name is validated (ad)" || fail "DNSSEC: no ad flag: $(D +dnssec example.com A | grep flags)"
@@ -234,6 +266,32 @@ SCRIPT
 	C nc -z -w 8 1.1.1.1 443 >/dev/null 2>&1 && pass "client -> Internet through the router (masquerade)" || fail "client cannot reach 1.1.1.1:443 through the router"
 	C nc -z -w 3 192.168.50.1 53 >/dev/null 2>&1 && pass "LAN side: tcp 53 is open" || fail "LAN side: tcp 53 is closed"
 	C nc -z -w 3 192.168.50.1 50000 >/dev/null 2>&1 && fail "LAN side: the Talos API is open (no rule opens it there)" || pass "LAN side: the Talos API is closed (no rule opens it there)"
+
+	# Personas: who uses such a router, and what each of them expects from it. Each one is a complete
+	# router.yaml, applied the way a user would (talos-patch, then talosctl patch mc).
+	for dir in test/vm/personas/*/; do
+		name=$(basename "$dir")
+		echo "== persona ${name#*-}: $(sed -n '1s/^# *//p' "$dir/router.yaml")"
+		sed -e "s|\$SUBNET|$subnet|" "$dir/router.yaml" >"$work/persona.yaml"
+		T get mc -o yaml >"$work/current.yaml" 2>/dev/null
+		starts=$(T logs ext-routald 2>/dev/null | grep -c 'routald starting' || true)
+		docker run --rm -v "$PWD":/src -w /src golang:1.26 sh -c "
+			$work/routald validate $work/persona.yaml >/dev/null &&
+			$work/routald talos-patch -current $work/current.yaml $work/persona.yaml > $work/persona-patch.yaml"
+		if ! T patch mc --patch "@$PWD/$work/persona-patch.yaml" >"$work/patch.log" 2>&1; then
+			fail "${name#*-}: the config was not applied: $(tail -2 "$work/patch.log" | tr '\n' ' ')"
+			continue
+		fi
+		# Talos restarts routald with the new router.yaml
+		for _ in $(seq 1 40); do
+			[ "$(T logs ext-routald 2>/dev/null | grep -c 'routald starting' || true)" -gt "$starts" ] && break
+			sleep 3
+		done
+		sleep 15 # the daemons start
+		T logs ext-routald >"$work/routald.log" 2>&1 || true
+		# shellcheck disable=SC1090
+		. "$dir/checks.sh"
+	done
 fi
 
 echo "== $passes passed, $fails failed"
