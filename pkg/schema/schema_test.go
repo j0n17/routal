@@ -76,9 +76,30 @@ var scalars = map[reflect.Type]object{
 func comments(t *testing.T) map[string]string {
 	t.Helper()
 
-	pkgs, err := parser.ParseDir(token.NewFileSet(), "../config", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, parser.ParseComments)
+	names, err := filepath.Glob("../config/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var (
+		fset  = token.NewFileSet()
+		files []*ast.File
+	)
+
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+
+		f, err := parser.ParseFile(fset, name, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		files = append(files, f)
+	}
+
+	pkg, err := doc.NewFromFiles(fset, files, "github.com/j0n17/routal/pkg/config")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +115,7 @@ func comments(t *testing.T) map[string]string {
 		return ""
 	}
 
-	for _, typ := range doc.New(pkgs["config"], "config", 0).Types {
+	for _, typ := range pkg.Types {
 		out[typ.Name] = strings.Join(strings.Fields(typ.Doc), " ")
 
 		st, ok := typ.Decl.Specs[0].(*ast.TypeSpec).Type.(*ast.StructType)

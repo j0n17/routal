@@ -24,3 +24,4 @@ got=$(askfrom "$remote" 192.168.50.11 8080)
 [ "$got" = second ] && pass "over the VPN: and the web server" || fail "over the VPN: the web server answered '$got'"
 answer=$(R dig +time=5 +tries=2 +short @10.8.0.1 nas.home.arpa A | head -1)
 [ "$answer" = 192.168.50.10 ] && pass "over the VPN: local names resolve" || fail "over the VPN: nas.home.arpa -> '$answer'"
+open_tcp="50000 8080 8081" # what a port scan from outside must find, and nothing else

@@ -100,6 +100,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       versions: ${{ steps.list.outputs.versions }}
+      latest: ${{ steps.list.outputs.latest }}
     steps:
       - uses: actions/checkout@v5
       # the last three releases of each supported Talos line (1.14 and 1.15)
@@ -107,13 +108,14 @@ jobs:
         run: |
           versions=$(hack/talos-versions.sh)
           echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          echo "latest=$(echo "$versions" | jq -r '.[-1]')" >> "$GITHUB_OUTPUT"
           echo "Talos versions: $versions" >> "$GITHUB_STEP_SUMMARY"
 
   talos:
     name: Talos ${{ matrix.talos }}
     needs: talos-versions
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -130,9 +132,13 @@ jobs:
       - name: VM tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q qemu-system-x86 ovmf dnsmasq-base netcat-openbsd busybox-static bind9-dnsutils socat miniupnpc wireguard-tools
+          sudo apt-get install -y -q qemu-system-x86 ovmf dnsmasq-base netcat-openbsd busybox-static bind9-dnsutils socat miniupnpc wireguard-tools nmap
           sudo modprobe wireguard
+      # every version plays the personas; the newest one also gets the port scans and the life cycle
+      # (reboot, WAN outage, lockout and rollback)
       - name: Boot test
+        env:
+          ADVANCED: ${{ matrix.talos == needs.talos-versions.outputs.latest && '1' || '' }}
         run: make vm-test TALOS_VERSION=${{ matrix.talos }} 2>&1 | tee ci.log
       - name: Failure summary
         if: failure()

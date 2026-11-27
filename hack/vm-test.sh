@@ -4,7 +4,9 @@
 # capabilities, and the WAN side is closed. On macOS (Apple silicon) the VM is a tart VM; on Linux
 # it is QEMU with KVM, with dnsmasq as the ISP and a client behind the router's second NIC (needs
 # sudo; this is what CI runs). There it then plays the personas of test/vm/personas, each with its
-# own router.yaml and what that user expects to work, or not to.
+# own router.yaml and what that user expects to work, or not to. With ADVANCED=1 it also scans every
+# port from outside after each persona, then takes the homelab through a reboot, a WAN outage and a
+# config that locks the admin out.
 # The VM, its disk and the image are removed at the end (KEEP=1 keeps the VM and says how to reach it).
 # Usage: hack/vm-test.sh <talos version> <out dir> <arch>      (make vm-test)
 set -eu
@@ -15,7 +17,7 @@ image=$out/metal-$arch.raw
 
 case $(uname -s) in
 Darwin) backend=tart tools="tart talosctl docker nc ping" ;;
-*) backend=qemu tools="docker nc ping sudo dnsmasq ip iptables qemu-system-x86_64 busybox dig socat upnpc wg" ;;
+*) backend=qemu tools="docker nc ping sudo dnsmasq ip iptables qemu-system-x86_64 busybox dig socat upnpc wg nmap" ;;
 esac
 for tool in $tools; do
 	command -v "$tool" >/dev/null || { echo "vm-test needs $tool"; exit 1; }
@@ -104,6 +106,7 @@ qemu_start() {
 		-drive if=virtio,format=raw,file="$work/disk.img" \
 		-netdev tap,id=n0,ifname="$tap",script=no,downscript=no -device virtio-net-pci,netdev=n0,mac="$mac" \
 		-netdev tap,id=n1,ifname="$lantap",script=no,downscript=no -device virtio-net-pci,netdev=n1,mac="$lanmac" \
+		-monitor unix:"$work/monitor.sock",server,nowait \
 		-display none -serial file:"$work/console.log" -daemonize -pidfile "$work/qemu.pid"
 	# this host is on the WAN side: what it sends to the LANs goes to the router, as from the Internet
 	sudo ip route add 192.168.50.0/24 via "$ip"
@@ -288,29 +291,130 @@ SCRIPT
 
 	# Personas: who uses such a router, and what each of them expects from it. Each one is a complete
 	# router.yaml, applied the way a user would (talos-patch, then talosctl patch mc).
-	for dir in test/vm/personas/*/; do
-		name=$(basename "$dir")
-		echo "== persona ${name#*-}: $(sed -n '1s/^# *//p' "$dir/router.yaml")"
-		sed -e "s|\$SUBNET|$subnet|" "$dir/router.yaml" >"$work/persona.yaml"
+
+	# running: waits for routald to have started again since $starts (Talos restarts it with a new
+	# router.yaml, and after a reboot), then for its daemons
+	running() {
+		for _ in $(seq 1 60); do
+			[ "$(T logs ext-routald 2>/dev/null | grep -c 'routald starting' || true)" -gt "$starts" ] && break
+			sleep 3
+		done
+		sleep 15
+		T logs ext-routald >"$work/routald.log" 2>&1 || true
+	}
+	# apply <router.yaml> [talosctl patch flags]: makes it the router's config
+	apply() {
+		conf=$1
+		shift
+		sed -e "s|\$SUBNET|$subnet|" "$conf" >"$work/persona.yaml"
 		T get mc -o yaml >"$work/current.yaml" 2>/dev/null
 		starts=$(T logs ext-routald 2>/dev/null | grep -c 'routald starting' || true)
 		docker run --rm -v "$PWD":/src -w /src golang:1.26 sh -c "
 			$work/routald validate $work/persona.yaml >/dev/null &&
 			$work/routald talos-patch -current $work/current.yaml $work/persona.yaml > $work/persona-patch.yaml"
-		if ! T patch mc --patch "@$PWD/$work/persona-patch.yaml" >"$work/patch.log" 2>&1; then
-			fail "${name#*-}: the config was not applied: $(tail -2 "$work/patch.log" | tr '\n' ' ')"
-			continue
+		T patch mc --patch "@$PWD/$work/persona-patch.yaml" "$@" >"$work/patch.log" 2>&1
+	}
+	# open_ports <nmap target and options>: the ports nmap finds open, sorted, on one line
+	open_ports() {
+		sudo nmap -n -Pn --min-rate 4000 --max-retries 2 -oG - "$@" 2>/dev/null | sed -n 's/.*Ports: //p' | tr ',' '\n' |
+			awk -F/ '$2 == "open" { print $1 + 0 }' | sort -n | tr '\n' ' ' | sed 's/ $//'
+	}
+	# scan <what> <tcp ports expected open from the Internet>: every TCP port over IPv4 and IPv6, and
+	# the UDP ports of the services a router runs. Nothing else may answer.
+	scan() {
+		want=$(echo "$2" | tr ' ' '\n' | sort -n | tr '\n' ' ' | sed 's/ $//')
+		got=$(open_ports -sS -p- "$ip")
+		[ "$got" = "$want" ] && pass "$1, port scan from outside: of 65535 TCP ports, open: ${got:-none}" || fail "$1, port scan from outside: open TCP ports '$got', expected '$want'"
+		# an answer on UDP ("open"; no answer shows as "open|filtered"): only a service would send one
+		got=$(open_ports -sU -p 53,67,69,123,161,500,1900,4500,5351,5353,51820 "$ip")
+		[ -z "$got" ] && pass "$1, port scan from outside: no UDP service answers" || fail "$1, port scan from outside: UDP ports answering: $got"
+		ping -6 -c 2 -W 2 "ff02::1%$bridge" >/dev/null 2>&1 || true
+		ll=$(ip -6 neigh show dev "$bridge" | awk -v m="$mac" 'tolower($0) ~ m && $1 ~ /^fe80/ { print $1; exit }')
+		if [ -z "$ll" ]; then
+			fail "$1: the router's IPv6 address on the WAN link was not found"
+		else
+			got=$(open_ports -6 -sS -p- "$ll%$bridge")
+			[ -z "$got" ] && pass "$1, port scan from outside over IPv6 ($ll): no TCP port is open" || fail "$1, port scan from outside over IPv6: open TCP ports '$got'"
 		fi
-		# Talos restarts routald with the new router.yaml
-		for _ in $(seq 1 40); do
-			[ "$(T logs ext-routald 2>/dev/null | grep -c 'routald starting' || true)" -gt "$starts" ] && break
-			sleep 3
-		done
-		sleep 15 # the daemons start
-		T logs ext-routald >"$work/routald.log" 2>&1 || true
+	}
+	# play <persona directory>: applies its config, runs its checks, scans the router from outside
+	play() {
+		name=$(basename "$1")
+		name=${name#*-}
+		open_tcp=50000 # the test's own way in (rule admin-from-host); a persona's checks.sh adds what it publishes
+		if ! apply "$1/router.yaml"; then
+			fail "$name: the config was not applied: $(tail -2 "$work/patch.log" | tr '\n' ' ')"
+			return
+		fi
+		running
 		# shellcheck disable=SC1090
-		. "$dir/checks.sh"
+		. "$1/checks.sh"
+		if [ -n "${ADVANCED:-}" ]; then scan "$name" "$open_tcp"; fi
+	}
+
+	for dir in test/vm/personas/*/; do
+		echo "== persona $(basename "$dir" | sed 's/^[0-9]*-//'): $(sed -n '1s/^# *//p' "$dir/router.yaml")"
+		play "$dir"
 	done
+
+	if [ -n "${ADVANCED:-}" ]; then
+		homelab=test/vm/personas/04-homelab
+		echo "== life cycle: the homelab through a reboot, a WAN outage and a config that locks the admin out"
+		play "$homelab"
+		kept() { T read /var/lib/routal/kea/kea-leases4.csv 2>/dev/null | grep -c '^192.168.50.10,' || true; }
+		[ "$(kept)" -gt 0 ] && pass "before the reboot: the NAS has a lease on the router's disk" || fail "no lease of the NAS in Kea's file"
+
+		starts=$(T logs ext-routald 2>/dev/null | grep -c 'routald starting' || true)
+		T reboot --wait=false >/dev/null 2>&1 || true
+		for _ in $(seq 1 30); do closed 50000 && break; sleep 2; done
+		starts=0 # the log starts again with the boot
+		for _ in $(seq 1 90); do T version >/dev/null 2>&1 && break; sleep 4; done
+		running
+		T version 2>/dev/null | grep -q "Tag: *$version" && pass "after a reboot: Talos is back" || fail "after a reboot: no Talos API"
+		[ "$(kept)" -gt 0 ] && pass "after a reboot: the lease of the NAS is still on disk" || fail "after a reboot: the lease of the NAS is gone"
+		echo "   after a reboot, the homelab again:"
+		# shellcheck disable=SC1090
+		. "$homelab/checks.sh"
+
+		# the ISP's link goes down for 20 s (QEMU takes the carrier away), then comes back
+		echo "set_link n0 off" | sudo socat - "UNIX-CONNECT:$work/monitor.sock" >/dev/null 2>&1 || true
+		sleep 5
+		C nc -z -w 4 1.1.1.1 443 >/dev/null 2>&1 && fail "during the outage: the Internet is still reachable (the link was not cut)" || pass "during a WAN outage: no Internet, as expected"
+		answer=$(D +short nas.home.arpa A | head -1)
+		[ "$answer" = 192.168.50.10 ] && pass "during a WAN outage: local names still resolve" || fail "during a WAN outage: nas.home.arpa -> '$answer'"
+		sleep 15
+		echo "set_link n0 on" | sudo socat - "UNIX-CONNECT:$work/monitor.sock" >/dev/null 2>&1 || true
+		for _ in $(seq 1 30); do T version >/dev/null 2>&1 && break; sleep 3; done
+		sleep 10
+		T logs ext-routald >"$work/routald.log" 2>&1 || true
+		echo "   after the outage, the homelab again:"
+		# shellcheck disable=SC1090
+		. "$homelab/checks.sh"
+
+		# a config without the rule that lets the admin in, applied the safe way: Talos takes it back
+		grep -v '^#' test/vm/personas/01-family/router.yaml | awk 'BEGIN { RS = "---\n"; ORS = "---\n" } !/admin-from-host/' >"$work/lockout.yaml"
+		if apply "$work/lockout.yaml" --mode try --timeout 60s; then
+			locked=
+			for _ in $(seq 1 15); do
+				if closed 50000; then locked=1; break; fi
+				sleep 2
+			done
+			[ -n "$locked" ] && pass "a config that locks the admin out, applied with --mode try: the Talos API is cut" || fail "the lockout config did not close the Talos API"
+			back=
+			for _ in $(seq 1 40); do
+				if T version >/dev/null 2>&1; then back=1; break; fi
+				sleep 4
+			done
+			[ -n "$back" ] && pass "Talos took the config back on its own: the API answers again" || fail "the Talos API did not come back after the try timeout"
+			sleep 20
+			T logs ext-routald >"$work/routald.log" 2>&1 || true
+			echo "   after the rollback, the homelab again:"
+			# shellcheck disable=SC1090
+			. "$homelab/checks.sh"
+		else
+			fail "the lockout config was not applied: $(tail -2 "$work/patch.log" | tr '\n' ' ')"
+		fi
+	fi
 fi
 
 echo "== $passes passed, $fails failed"
