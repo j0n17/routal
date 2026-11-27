@@ -363,14 +363,12 @@ SCRIPT
 		old=$(ext)
 		play "$homelab"
 		[ "$(kept)" -gt 0 ] && pass "before the upgrade (routald $old): the NAS has a lease on the router's disk" || fail "before the upgrade: no lease of the NAS in Kea's file"
-		if T upgrade --image "$UPGRADE_TO" --wait=false >"$work/upgrade.log" 2>&1; then
-			# the installer writes the new system next to the running one; then the router is rebooted
-			# by hand: without Kubernetes, Talos does not do it
-			sleep 15
-			for _ in $(seq 1 90); do
-				[ "$(T get machinestatus -o yaml 2>/dev/null | sed -n 's/^ *stage: *//p' | head -1)" = running ] && break
-				sleep 4
-			done
+		# The installer writes the new system next to the running one. talosctl then wants to drain
+		# the node through Kubernetes, which this router does not have, and exits with an error after
+		# "upgrade completed": the router is rebooted by hand.
+		T upgrade --image "$UPGRADE_TO" >"$work/upgrade.log" 2>&1 || true
+		if grep -q 'upgrade completed' "$work/upgrade.log"; then
+			pass "talosctl upgrade installed this build's image from the registry"
 			T reboot --wait=false >/dev/null 2>&1 || true
 			for _ in $(seq 1 30); do closed 50000 && break; sleep 2; done
 			starts=0
@@ -385,7 +383,7 @@ SCRIPT
 			# shellcheck disable=SC1090
 			. "$homelab/checks.sh"
 		else
-			fail "talosctl upgrade was refused: $(tail -3 "$work/upgrade.log" | tr '\n' ' ')"
+			fail "talosctl upgrade did not complete: $(tail -3 "$work/upgrade.log" | tr '\n' ' ')"
 		fi
 	fi
 
