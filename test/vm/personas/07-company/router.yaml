@@ -1,0 +1,140 @@
+# A small company: staff and servers on separate networks, rules written with named groups, what
+# is refused is refused out loud (logged), and DNS is encrypted and validated.
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: wan
+links: [wan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: staff
+links: [lan0]
+---
+apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: servers
+links: [srv0]
+---
+# Names instead of addresses and ports in the rules: one place to change when they change.
+apiVersion: v1alpha1
+kind: FirewallAddressGroupConfig
+name: admins
+subnets: [192.168.50.20/32]
+---
+apiVersion: v1alpha1
+kind: FirewallPortGroupConfig
+name: web
+ports: [8080]
+---
+# Rules are read in order: administrators first, then what everyone may do, then the refusal.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: admins-to-servers
+from: staff
+to: servers
+sourceGroups: [admins]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: staff-to-web
+from: staff
+to: servers
+protocol: tcp
+portGroups: [web]
+---
+# Without this rule the traffic would be dropped just the same, silently: here it is logged.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: staff-to-servers-refused
+from: staff
+to: servers
+action: block
+log: true
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: servers-to-staff-refused
+from: servers
+to: staff
+action: block
+log: true
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: staff-to-wan
+from: staff
+to: wan
+---
+# Servers fetch their updates and nothing else.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: servers-updates
+from: servers
+to: wan
+protocol: tcp
+ports: [80, 443]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: staff-dns-dhcp
+from: staff
+to: self
+protocol: udp
+ports: [53, 67]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: staff-dns-tcp
+from: staff
+to: self
+protocol: tcp
+ports: [53]
+---
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: servers-dns-dhcp
+from: servers
+to: self
+protocol: udp
+ports: [53, 67]
+---
+# The test drives the router from its WAN side: without this rule it locks itself out.
+apiVersion: v1alpha1
+kind: FirewallRuleConfig
+name: admin-from-host
+from: wan
+to: self
+protocol: tcp
+ports: [50000]
+sourceSubnets: [$SUBNET]
+---
+apiVersion: v1alpha1
+kind: MasqueradeConfig
+name: out
+outLink: wan0
+sourceSubnets: [192.168.50.0/24, 192.168.60.0/24]
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: staff
+link: lan0
+rangeStart: 192.168.50.100
+rangeEnd: 192.168.50.200
+domain: corp.example
+---
+apiVersion: v1alpha1
+kind: DHCPServerConfig
+name: servers
+link: srv0
+rangeStart: 192.168.60.100
+rangeEnd: 192.168.60.200
+---
+# Queries leave encrypted (DNS over TLS), and signed answers are checked (DNSSEC).
+apiVersion: v1alpha1
+kind: DNSServerConfig
+listenLinks: [lan0, srv0]
+tlsUpstreams:
+  - address: 9.9.9.9
+    name: dns.quad9.net
+dnssec: true
+localDomain: corp.example

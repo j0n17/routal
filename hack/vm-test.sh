@@ -147,6 +147,7 @@ with_var() {
 }
 
 qemu_stop() {
+	if [ -f "$work/www.pid" ]; then kill "$(cat "$work/www.pid")" 2>/dev/null || true; fi
 	for pidfile in "$work/qemu.pid" "$work/dnsmasq.pid"; do
 		if [ -f "$pidfile" ]; then sudo kill "$(sudo cat "$pidfile")" 2>/dev/null || true; fi
 	done
@@ -303,6 +304,13 @@ SCRIPT
 	# both machines behind the router run a small server on 8080 that says which one it is
 	C socat TCP4-LISTEN:8080,fork,reuseaddr SYSTEM:'echo first' >/dev/null 2>&1 &
 	G socat TCP4-LISTEN:8080,fork,reuseaddr SYSTEM:'echo second' >/dev/null 2>&1 &
+	# the second machine has another service, one that rules may refuse while it listens
+	G socat TCP4-LISTEN:2222,fork,reuseaddr SYSTEM:'echo second' >/dev/null 2>&1 &
+	# the Internet side serves a blocklist, for the configs that download one
+	mkdir -p "$work/www"
+	printf '# sites the family does not want\n0.0.0.0 tiktok.com\n0.0.0.0 www.tiktok.com\n' >"$work/www/blocklist.txt"
+	(cd "$work/www" && exec python3 -m http.server 8000 --bind "$net.1" >/dev/null 2>&1) &
+	echo $! >"$work/www.pid"
 	dhcp "$client" lan0 >/dev/null
 	lease=$(cat "$work/lease" 2>/dev/null || true)
 	case $lease in
@@ -341,13 +349,29 @@ SCRIPT
 	apply() {
 		conf=$1
 		shift
-		sed -e "s|\$SUBNET|$subnet|" "$conf" >"$work/persona.yaml"
+		sed -e "s|\$SUBNET|$subnet|" -e "s|\$WANHOST|$net.1|" "$conf" >"$work/persona.yaml"
 		T get mc -o yaml >"$work/current.yaml" 2>/dev/null
 		starts=$(T logs ext-routald 2>/dev/null | grep -c 'routald starting' || true)
 		docker run --rm -v "$PWD":/src -w /src golang:1.26 sh -c "
 			$work/routald validate $work/persona.yaml >/dev/null &&
 			$work/routald talos-patch -current $work/current.yaml $work/persona.yaml > $work/persona-patch.yaml"
 		T patch mc --patch "@$PWD/$work/persona-patch.yaml" "$@" >"$work/patch.log" 2>&1
+	}
+	# apply_full <router.yaml> <talos.yaml>...: applies a whole router, the machine and what it routes,
+	# as one config: what a persona's directory is
+	apply_full() {
+		conf=$1
+		shift
+		sed -e "s|\$SUBNET|$subnet|" -e "s|\$WANHOST|$net.1|" "$conf" >"$work/persona.yaml"
+		cat "$@" "$registry" | sed -e "s|\$MAC|$mac|" -e "s|\$LANMAC|$lanmac|" -e "s|\$SUBNET|$subnet|" \
+			-e "s|\$WGPEER|$wgpeer|" -e "s|\$REGISTRY|${UPGRADE_REGISTRY:-}|" >"$work/persona-talos.yaml"
+		starts=$(T logs ext-routald 2>/dev/null | grep -c 'routald starting' || true)
+		docker run --rm -v "$PWD":/src -w /src golang:1.26 sh -c "
+			$work/routald validate $work/persona.yaml >/dev/null &&
+			$work/routald talos-render $work/persona-talos.yaml > $work/persona-talos.src.yaml &&
+			$work/routald talos-patch $work/persona.yaml > $work/persona-patch.yaml" &&
+			tctl machineconfig patch /out/gen/controlplane.yaml --patch @/out/persona-talos.src.yaml --patch @/out/persona-patch.yaml -o /out/persona-config.yaml >"$work/patch.log" 2>&1 &&
+			T apply-config -f "$PWD/$work/persona-config.yaml" >>"$work/patch.log" 2>&1
 	}
 	# open_ports <nmap target and options>: the ports nmap finds open, sorted, on one line
 	open_ports() {
@@ -381,11 +405,13 @@ SCRIPT
 		name=$(basename "$1")
 		name=${name#*-}
 		open_tcp=50000 # the test's own way in (rule admin-from-host); a persona's checks.sh adds what it publishes
-		if ! apply "$1/router.yaml"; then
-			fail "$name: the config was not applied: $(tail -2 "$work/patch.log" | tr '\n' ' ')"
+		if ! apply_full "$1/router.yaml" "$1/talos.yaml"; then
+			fail "$name: the config was not applied: $(tail -3 "$work/patch.log" | tr '\n' ' ' | cut -c1-400)"
 			return
 		fi
 		running
+		# the machine changed too (links renamed, a VLAN or a tunnel added): the API first
+		for _ in $(seq 1 20); do T version >/dev/null 2>&1 && break; sleep 3; done
 		# shellcheck disable=SC1090
 		. "$1/checks.sh"
 		if [ -n "${ADVANCED:-}" ]; then scan "$name" "$open_tcp"; fi

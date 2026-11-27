@@ -3,12 +3,12 @@
 apiVersion: v1alpha1
 kind: FirewallZoneConfig
 name: wan
-links: [wan0]
+links: [net0]
 ---
 apiVersion: v1alpha1
 kind: FirewallZoneConfig
 name: lan
-links: [lan0]
+links: [net1]
 ---
 apiVersion: v1alpha1
 kind: FirewallZoneConfig
@@ -74,13 +74,13 @@ sourceSubnets: [$SUBNET]
 apiVersion: v1alpha1
 kind: MasqueradeConfig
 name: lan-out
-outLink: wan0
+outLink: net0
 sourceSubnets: [192.168.50.0/24]
 ---
 apiVersion: v1alpha1
 kind: MasqueradeConfig
 name: guest-out
-outLink: wan0
+outLink: net0
 sourceSubnets: [192.168.60.0/24]
 ---
 apiVersion: v1alpha1
@@ -93,13 +93,13 @@ rangeEnd: 192.168.60.200
 apiVersion: v1alpha1
 kind: DHCPServerConfig
 name: lan
-link: lan0
+link: net1
 rangeStart: 192.168.50.100
 rangeEnd: 192.168.50.200
 domain: home.arpa
 ---
 apiVersion: v1alpha1
 kind: DNSServerConfig
-listenLinks: [lan0, guest0]
+listenLinks: [net1, guest0]
 upstreams: [9.9.9.9, 149.112.112.112]
 localDomain: home.arpa

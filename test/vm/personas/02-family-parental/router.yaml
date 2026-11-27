@@ -4,12 +4,12 @@
 apiVersion: v1alpha1
 kind: FirewallZoneConfig
 name: wan
-links: [wan0]
+links: [enp0s2]
 ---
 apiVersion: v1alpha1
 kind: FirewallZoneConfig
 name: lan
-links: [lan0]
+links: [enp0s3]
 ---
 # The children's devices: fixed addresses (static leases below).
 apiVersion: v1alpha1
@@ -73,13 +73,13 @@ sourceSubnets: [$SUBNET]
 apiVersion: v1alpha1
 kind: MasqueradeConfig
 name: lan-out
-outLink: wan0
+outLink: enp0s2
 sourceSubnets: [192.168.50.0/24]
 ---
 apiVersion: v1alpha1
 kind: DHCPServerConfig
 name: lan
-link: lan0
+link: enp0s3
 rangeStart: 192.168.50.100
 rangeEnd: 192.168.50.200
 domain: home.arpa
@@ -90,8 +90,10 @@ staticLeases:
 ---
 apiVersion: v1alpha1
 kind: DNSServerConfig
-listenLinks: [lan0]
+listenLinks: [enp0s3]
 upstreams: [9.9.9.9, 149.112.112.112]
 localDomain: home.arpa
 blocking:
-  domains: [doubleclick.net, tiktok.com]
+  # a list kept somewhere else, downloaded again every day: here the test's own, with tiktok.com
+  lists: [http://$WANHOST:8000/blocklist.txt]
+  domains: [doubleclick.net]

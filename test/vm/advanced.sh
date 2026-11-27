@@ -82,7 +82,7 @@ healthy && pass "space is freed: routald reports healthy again" || fail "after t
 again "after the disk was freed"
 
 echo "== clock in the past: the router starts in the year 2000 (no battery), with DNSSEC and DNS over TLS"
-if apply test/vm/router.yaml; then
+if apply_full test/vm/router.yaml test/vm/talos.yaml test/vm/lan-nic.yaml; then
 	running
 	qemu_halt
 	qemu_boot -rtc base=2000-01-01T00:00:00

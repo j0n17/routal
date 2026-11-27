@@ -1,0 +1,62 @@
+# Talos side of the home router with a guest network.
+# Interfaces: named by MAC address. The address is printed on the port or on the card, and the name
+# follows the card wherever it is plugged; replacing a card means updating this file.
+apiVersion: v1alpha1
+kind: HostnameConfig
+auto: "off"
+hostname: home
+---
+# The test VM boots an image that already holds Talos with the extension. A real install names
+# its own installer here instead (see examples/reference/talos.yaml).
+apiVersion: v1alpha1
+kind: UnattendedInstallConfig
+$patch: delete
+---
+apiVersion: v1alpha1
+kind: LinkAliasConfig
+name: wan0
+selector:
+  match: mac(link.permanent_addr) == "$MAC"
+---
+apiVersion: v1alpha1
+kind: LinkAliasConfig
+name: lan0
+selector:
+  match: mac(link.permanent_addr) == "$LANMAC"
+---
+apiVersion: v1alpha1
+kind: DHCPv4Config
+name: wan0
+---
+apiVersion: v1alpha1
+kind: LinkConfig
+name: lan0
+up: true
+addresses:
+  - address: 192.168.50.1/24
+  - address: fd00:50::1/64
+---
+# The visitors' network, tagged 20 on the LAN port
+apiVersion: v1alpha1
+kind: VLANConfig
+name: guest0
+vlanID: 20
+parent: lan0
+up: true
+addresses:
+  - address: 192.168.60.1/24
+---
+# Traffic to the router itself is blocked unless opened (routald opens what `to: self` rules need).
+apiVersion: v1alpha1
+kind: NetworkDefaultActionConfig
+ingress: block
+---
+# The Talos API from where the test drives the router.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: talos-api
+portSelector:
+  ports: [50000]
+  protocol: tcp
+ingress:
+  - subnet: $SUBNET

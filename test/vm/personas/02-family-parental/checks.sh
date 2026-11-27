@@ -10,7 +10,13 @@ parent=$(dhcp "$guest" trunk0)
 [ -n "$parent" ] && pass "a parent's laptop gets an address: $parent" || fail "the laptop got no lease"
 answer=$(D +short example.com A | head -1)
 [ -n "$answer" ] && pass "the tablet resolves example.com -> $answer" || fail "DNS: $(D example.com A | grep status)"
-D www.tiktok.com A | grep -q 'status: NXDOMAIN' && pass "a blocked site does not resolve" || fail "www.tiktok.com: $(D www.tiktok.com A | grep status)"
+listed=
+for _ in 1 2 3 4 5 6 7 8 9 10; do # the list is downloaded after the router started
+	if D www.tiktok.com A | grep -q 'status: NXDOMAIN'; then listed=1; break; fi
+	sleep 4
+done
+[ -n "$listed" ] && pass "a site of the downloaded list does not resolve" || fail "www.tiktok.com (in the list by URL): $(D www.tiktok.com A | grep status)"
+D ad.doubleclick.net A | grep -q 'status: NXDOMAIN' && pass "nor a domain written in the config" || fail "ad.doubleclick.net: $(D ad.doubleclick.net A | grep status)"
 C nc -z -w 8 1.1.1.1 443 >/dev/null 2>&1 && pass "the tablet reaches the web" || fail "the tablet cannot reach 1.1.1.1:443"
 [ -z "$(C dig +time=3 +tries=1 +short @9.9.9.9 example.com A 2>/dev/null | grep -v '^;')" ] && pass "the tablet cannot ask another resolver (udp 53)" || fail "the tablet resolved through 9.9.9.9"
 C nc -z -w 4 9.9.9.9 853 >/dev/null 2>&1 && fail "the tablet reaches a DNS over TLS resolver" || pass "the tablet cannot reach a DNS over TLS resolver (tcp 853)"

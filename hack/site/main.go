@@ -288,6 +288,26 @@ func template(kind string, def definition, fields []string, values map[string]st
 	return b.String()
 }
 
+// ways lists what can be done in several ways, and the personas that show each: goal, way, personas.
+var ways = [][3]string{
+	{"name the interfaces", "the kernel's names, as they are: nothing to declare", "family family-parental gamer"},
+	{"", "by MAC address (<code>mac(link.permanent_addr)</code>): the name follows the card", "homelab guests"},
+	{"", "every port of one kind of NIC, numbered (<code>net%d</code>, <code>link.driver</code>): one file for identical boxes", "hotel"},
+	{"", "by PCI slot (<code>link.bus_path</code>): a spare card takes over without a change", "company"},
+	{"say who a rule is for", "addresses written in the rule (<code>sourceSubnets</code>, <code>destinationSubnets</code>)", "homelab"},
+	{"", "named groups (<code>FirewallAddressGroupConfig</code>, <code>FirewallPortGroupConfig</code>)", "family-parental company"},
+	{"publish a service", "a port forward written in the config", "homelab"},
+	{"", "UPnP: the device opens its own port", "gamer"},
+	{"keep two networks apart", "no rule: what nothing allows is dropped, silently", "guests hotel"},
+	{"", "a <code>block</code> rule with <code>log</code>: refused and written to the log", "company"},
+	{"block sites", "names written in the config", "family"},
+	{"", "a list downloaded from a URL, refreshed every day", "family-parental"},
+	{"resolve names", "plain DNS to a public resolver", "family homelab hotel"},
+	{"", "DNS over TLS with DNSSEC validation", "company"},
+	{"reach the network from outside", "one published port per service", "homelab"},
+	{"", "a WireGuard VPN to the whole LAN", "homelab"},
+}
+
 const script = `
 document.addEventListener('click', function (e) {
   var b = e.target.closest('button.copy');
@@ -495,10 +515,19 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 
 	section("personas", "Personas", "Who uses such a router, and what each of them expects. The tests boot a real Talos in a VM, apply each of these configs, and check every line below from a device behind the router, a visitor on a VLAN, a laptop on the road and the Internet side.")
 
-	// the machine the personas run on: where the links of their zones come from
-	body.WriteString("<p>In these files <code>wan0</code>, <code>lan0</code> and <code>guest0</code> are not kernel names: they are aliases, a VLAN and a WireGuard link declared on the Talos side, where each NIC is selected by a property that does not change (its MAC address, its place on the PCI bus).</p>\n")
-	file(&body, "talos.yaml (links of the test router)", "test/vm/talos.yaml", false)
-	file(&body, "talos.yaml, continued (LAN, guest VLAN, WireGuard)", "test/vm/lan-nic.yaml", false)
+	body.WriteString("<p>Each persona is a complete router: <code>talos.yaml</code> for the machine and <code>router.yaml</code> for what it routes. Where the same thing can be done in several ways, each persona uses the one that suits its user:</p>\n")
+	body.WriteString("<h3 id=\"ways\">Several ways to do it<a class=\"anchor\" href=\"#ways\" aria-label=\"Link to this table\">#</a></h3>\n<table><tr><th>To</th><th>One way</th><th>Used by</th></tr>\n")
+
+	for _, w := range ways {
+		var users []string
+		for _, u := range strings.Fields(w[2]) {
+			users = append(users, fmt.Sprintf(`<a href="#persona-%s">%s</a>`, u, u))
+		}
+
+		fmt.Fprintf(&body, "<tr><td>%s</td><td>%s</td><td>%s</td></tr>\n", w[0], w[1], strings.Join(users, ", "))
+	}
+
+	body.WriteString("</table>\n")
 
 	for _, path := range personas {
 		dir := filepath.Dir(path)
@@ -518,6 +547,7 @@ talosctl read /run/routal/routal/status.json | routald status -   <span class="c
 			body.WriteString("</ul>\n")
 		}
 
+		file(&body, "talos.yaml", filepath.Join(dir, "talos.yaml"), false)
 		file(&body, "router.yaml", path, false)
 	}
 

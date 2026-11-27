@@ -20,6 +20,10 @@ check: test ## also check every example with the real tools: nftables ruleset, d
 	docker build --platform linux/$(ARCH) --target daemons -t routal-daemons:$(ARCH) .
 	docker run --rm --platform linux/$(ARCH) --cap-add NET_ADMIN -v "$(CURDIR)":/src:ro routal-daemons:$(ARCH) /src/hack/check-configs.sh
 	hack/check-talos.sh $(TALOS_VERSION) $(OUT)/talos-check
+	hack/check-personas.sh $(OUT) $(TALOS_VERSION)
+
+check-personas: ## validate every persona of test/vm/personas (router.yaml and talos.yaml) without a VM
+	hack/check-personas.sh $(OUT) $(TALOS_VERSION)
 
 check-talos: ## validate every example's talos.yaml with talosctl of TALOS_VERSION (hack/talos-versions.sh lists the ones CI tests)
 	hack/check-talos.sh $(TALOS_VERSION) $(OUT)/talos-check
