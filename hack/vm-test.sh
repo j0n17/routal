@@ -13,7 +13,7 @@ set -eu
 version=$1 out=$2 arch=$3
 vm=routal-vmtest
 work=$out/vm-test
-image=$out/metal-$arch.raw
+image=${UPGRADE_IMAGE:-$out/metal-$arch.raw}
 
 case $(uname -s) in
 Darwin) backend=tart tools="tart talosctl docker nc ping" ;;
@@ -179,7 +179,9 @@ echo "   $ip ($mac)"
 echo "== config"
 lan=test/vm/lan-dummy.yaml
 if [ "$backend" = qemu ]; then lan=test/vm/lan-nic.yaml; fi
-cat test/vm/talos.yaml "$lan" | sed -e "s|\$MAC|$mac|" -e "s|\$LANMAC|${lanmac:-}|" -e "s|\$WGPEER|${wgpeer:-}|" -e "s|\$SUBNET|$subnet|" >"$work/talos.yaml"
+registry=/dev/null
+if [ -n "${UPGRADE_TO:-}" ]; then registry=test/vm/registry.yaml; fi
+cat test/vm/talos.yaml "$lan" "$registry" | sed -e "s|\$REGISTRY|${UPGRADE_REGISTRY:-}|" -e "s|\$MAC|$mac|" -e "s|\$LANMAC|${lanmac:-}|" -e "s|\$WGPEER|${wgpeer:-}|" -e "s|\$SUBNET|$subnet|" >"$work/talos.yaml"
 sed -e "s|\$SUBNET|$subnet|" test/vm/router.yaml >"$work/router.yaml"
 docker run --rm -v "$PWD":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src golang:1.26 sh -c "
 	go build -buildvcs=false -o $work/routald ./cmd/routald &&
@@ -352,16 +354,51 @@ SCRIPT
 		if [ -n "${ADVANCED:-}" ]; then scan "$name" "$open_tcp"; fi
 	}
 
+	kept() { T read /var/lib/routal/kea/kea-leases4.csv 2>/dev/null | grep -c '^192.168.50.10,' || true; }
+	homelab=test/vm/personas/04-homelab
+
+	if [ -n "${UPGRADE_TO:-}" ]; then
+		echo "== upgrade: from the build of ${UPGRADE_FROM:-?} to this one, with the homelab's config and leases"
+		ext() { T get extensions 2>/dev/null | grep routald | awk '{ print $NF }' || true; }
+		old=$(ext)
+		play "$homelab"
+		[ "$(kept)" -gt 0 ] && pass "before the upgrade (routald $old): the NAS has a lease on the router's disk" || fail "before the upgrade: no lease of the NAS in Kea's file"
+		if T upgrade --image "$UPGRADE_TO" --wait=false >"$work/upgrade.log" 2>&1; then
+			# the installer writes the new system next to the running one; then the router is rebooted
+			# by hand: without Kubernetes, Talos does not do it
+			sleep 15
+			for _ in $(seq 1 90); do
+				[ "$(T get machinestatus -o yaml 2>/dev/null | sed -n 's/^ *stage: *//p' | head -1)" = running ] && break
+				sleep 4
+			done
+			T reboot --wait=false >/dev/null 2>&1 || true
+			for _ in $(seq 1 30); do closed 50000 && break; sleep 2; done
+			starts=0
+			for _ in $(seq 1 90); do T version >/dev/null 2>&1 && break; sleep 4; done
+			running
+			new=$(ext)
+			[ "$new" = "${UPGRADE_VERSION:-}" ] && pass "after the upgrade: the router runs this build (routald $old -> $new)" || fail "after the upgrade: routald is '$new', expected '${UPGRADE_VERSION:-}' ($(tail -2 "$work/upgrade.log" | tr '\n' ' '))"
+			[ "$(kept)" -gt 0 ] && pass "after the upgrade: the lease of the NAS is still on disk" || fail "after the upgrade: the lease of the NAS is gone"
+			trouble=$(grep -E 'LEASE_SANITY_FAIL|Permission denied|config rejected|keeps exiting' "$work/routald.log" | head -3 || true)
+			[ -z "$trouble" ] && pass "after the upgrade: the new build takes the old state over without a complaint" || fail "after the upgrade: $trouble"
+			echo "   after the upgrade, the homelab again:"
+			# shellcheck disable=SC1090
+			. "$homelab/checks.sh"
+		else
+			fail "talosctl upgrade was refused: $(tail -3 "$work/upgrade.log" | tr '\n' ' ')"
+		fi
+	fi
+
+	if [ -z "${UPGRADE_TO:-}" ]; then
 	for dir in test/vm/personas/*/; do
 		echo "== persona $(basename "$dir" | sed 's/^[0-9]*-//'): $(sed -n '1s/^# *//p' "$dir/router.yaml")"
 		play "$dir"
 	done
+	fi
 
-	if [ -n "${ADVANCED:-}" ]; then
-		homelab=test/vm/personas/04-homelab
+	if [ -n "${ADVANCED:-}" ] && [ -z "${UPGRADE_TO:-}" ]; then
 		echo "== life cycle: the homelab through a reboot, a WAN outage and a config that locks the admin out"
 		play "$homelab"
-		kept() { T read /var/lib/routal/kea/kea-leases4.csv 2>/dev/null | grep -c '^192.168.50.10,' || true; }
 		[ "$(kept)" -gt 0 ] && pass "before the reboot: the NAS has a lease on the router's disk" || fail "no lease of the NAS in Kea's file"
 
 		starts=$(T logs ext-routald 2>/dev/null | grep -c 'routald starting' || true)

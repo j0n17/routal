@@ -1,5 +1,7 @@
 VERSION       ?= 0.1.0
 FUZZTIME      ?= 1m
+ROUNDS        ?= 150
+SEED          ?=
 TALOS_VERSION ?= v1.15.0-beta.1
 ARCH          ?= arm64
 GO_IMAGE      ?= golang:1.26
@@ -9,7 +11,7 @@ VM_ARCH       ?= $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,amd64)
 
 GO = docker run --rm -v "$(CURDIR)":/src -v routal-gocache:/root/.cache/go-build -v routal-gomod:/go/pkg/mod -w /src $(GO_IMAGE)
 
-.PHONY: test check check-talos vm-test cover schema fuzz integration clab extension installer push-installer image clean
+.PHONY: test check check-talos vm-test vm-upgrade-test cover schema fuzz integration clab extension installer push-installer image clean
 
 test: ## run unit tests (in Docker)
 	$(GO) sh -c 'test -z "$$(gofmt -l .)" && go vet ./... && go test ./...'
@@ -31,6 +33,13 @@ fuzz: ## fuzz the parsers and the config for FUZZTIME each; nft, Unbound, radvd 
 	$(GO) sh -c 'for p in pkg/blocklist pkg/pd pkg/leases test/variants; do \
 		CGO_ENABLED=0 GOARCH=$(ARCH) go test -c -fuzz=Fuzz -o $(OUT)/fuzz/$$(basename $$p).test ./$$p || exit 1; done'
 	docker run --rm --platform linux/$(ARCH) --cap-add NET_ADMIN -v "$(CURDIR)":/src routal-daemons:$(ARCH) /src/hack/fuzz.sh $(FUZZTIME) /src/$(OUT)/fuzz
+
+fuzz-firewall: ## random rules loaded in a real kernel, probed from every zone and compared with a model of router.yaml (ROUNDS=150, SEED= to replay)
+	docker build --platform linux/$(ARCH) --target daemons -t routal-daemons:$(ARCH) .
+	mkdir -p $(OUT)/fuzz
+	$(GO) sh -c 'CGO_ENABLED=0 GOARCH=$(ARCH) go test -c -o $(OUT)/fuzz/firewall.test ./test/firewall'
+	docker run --rm --platform linux/$(ARCH) --privileged -e ROUTAL_FIREWALL_NETNS=1 -e ROUNDS=$(ROUNDS) -e SEED=$(SEED) \
+		-v "$(CURDIR)":/src:ro routal-daemons:$(ARCH) /src/$(OUT)/fuzz/firewall.test -test.v -test.run TestRulesetMatchesModel
 
 integration: ## data-plane tests in network namespaces (router, LAN, NAS VLAN, WAN, VPN peer)
 	docker build --platform linux/$(ARCH) --target integration -t routal-integration:$(ARCH) .
@@ -76,6 +85,9 @@ image: extension ## build a Talos metal disk image with the extension: $(OUT)/me
 vm-test: ## boot Talos TALOS_VERSION with the extension in a VM (tart on an Apple silicon Mac, QEMU with sudo on Linux) and check the daemons there; removes the VM and the image
 	$(MAKE) image ARCH=$(VM_ARCH)
 	hack/vm-test.sh $(TALOS_VERSION) $(OUT) $(VM_ARCH)
+
+vm-upgrade-test: ## Linux: boot the build of test/vm/upgrade-from, upgrade it to this one with talosctl upgrade, check that the state is kept
+	hack/vm-upgrade.sh $(TALOS_VERSION) $(OUT) $(VM_ARCH)
 
 clean:
 	rm -f $(OUT)/*.tar $(OUT)/*.raw $(OUT)/*.yaml

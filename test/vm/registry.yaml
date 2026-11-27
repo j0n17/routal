@@ -1,0 +1,7 @@
+---
+# the upgrade test serves this build's installer from the test host, over plain HTTP
+apiVersion: v1alpha1
+kind: RegistryMirrorConfig
+name: $REGISTRY
+endpoints:
+  - url: http://$REGISTRY
