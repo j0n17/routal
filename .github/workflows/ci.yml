@@ -102,7 +102,7 @@ jobs:
       versions: ${{ steps.list.outputs.versions }}
     steps:
       - uses: actions/checkout@v5
-      # the newest release of each of the last three minors, from 1.14 on
+      # for every major, the newest release of each of its last three minors, from 1.14 on
       - id: list
         run: |
           versions=$(hack/talos-versions.sh)

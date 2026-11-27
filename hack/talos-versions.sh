@@ -1,7 +1,7 @@
 #!/bin/sh
-# Prints the Talos versions to test as a JSON list: the newest release of each of the last three
-# minors, from MIN on (a stable release, else its newest pre-release), as published on
-# ghcr.io/siderolabs/talosctl.
+# Prints the Talos versions to test as a JSON list: for every major, the newest release of each of
+# its last three minors (a stable release, else its newest pre-release), as published on
+# ghcr.io/siderolabs/talosctl. Minors below MIN, the oldest the extension supports, are left out.
 # Usage: hack/talos-versions.sh [min minor, default 1.14]
 set -eu
 exec python3 - "${1:-1.14}" <<'PY'
@@ -37,5 +37,9 @@ for tag in tags:
     if minor not in newest or key > newest[minor][0]:
         newest[minor] = (key, tag)
 
-print(json.dumps([t for _, (_, t) in sorted(newest.items())][-3:]))
+# the last three minors of every major
+out = []
+for major in sorted({m for m, _ in newest}):
+    out += [newest[k][1] for k in sorted(k for k in newest if k[0] == major)[-3:]]
+print(json.dumps(out))
 PY
