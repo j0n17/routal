@@ -20,14 +20,17 @@ for tool in $tools; do
 done
 [ -f "$image" ] || { echo "$image is missing: make image ARCH=$arch TALOS_VERSION=$version"; exit 1; }
 
+# The image is 3 GB on arm64 and more on amd64 (a BOOT partition for GRUB), and EPHEMERAL (/var)
+# needs room after it, or /var/lib never appears and the extension waits for it.
+disk_gb=$(($(wc -c <"$image") / 1073741824 + 5))
+
 # --- tart (macOS): shared network, the Mac is the WAN side
 tart_start() {
 	if tart list | awk '{print $2}' | grep -qx "$vm"; then echo "a VM named $vm exists: tart delete $vm"; exit 1; fi
-	# 6 GB: the image is 3 GB and EPHEMERAL (/var) needs room, or /var/lib never appears
-	tart create --linux --disk-size 6 "$vm"
+	tart create --linux --disk-size "$disk_gb" "$vm"
 	tart set "$vm" --cpu 2 --memory 2048
 	cp "$image" "$HOME/.tart/vms/$vm/disk.img"
-	truncate -s 6G "$HOME/.tart/vms/$vm/disk.img"
+	truncate -s "${disk_gb}G" "$HOME/.tart/vms/$vm/disk.img"
 	mac=$(sed -n 's/.*"macAddress" *: *"\([^"]*\)".*/\1/p' "$HOME/.tart/vms/$vm/config.json")
 	tart run --no-graphics "$vm" >"$work/tart.log" 2>&1 &
 	ip=$(tart ip "$vm" --wait 120)
@@ -42,7 +45,7 @@ bridge=br-routal tap=tap-routal net=192.168.212
 qemu_start() {
 	mac=52:54:00:d4:00:32 ip=$net.50
 	cp "$image" "$work/disk.img"
-	truncate -s 6G "$work/disk.img"
+	truncate -s "${disk_gb}G" "$work/disk.img"
 	sudo ip link add "$bridge" type bridge
 	sudo ip addr add "$net.1/24" dev "$bridge"
 	sudo ip link set "$bridge" up
@@ -175,5 +178,10 @@ for port in 53 60123; do
 done
 
 echo "== $passes passed, $fails failed"
-[ "$fails" = 0 ] || { echo "-- routald log:"; tail -40 "$work/routald.log"; }
+[ "$fails" = 0 ] || {
+	echo "-- volumes:"
+	T get volumestatus 2>&1 | grep -E 'EPHEMERAL|STATE' || true
+	echo "-- routald log:"
+	tail -40 "$work/routald.log"
+}
 [ "$fails" = 0 ]
