@@ -1,6 +1,6 @@
 VERSION       ?= 0.1.0
 FUZZTIME      ?= 1m
-TALOS_VERSION ?= v1.15.0-beta.0
+TALOS_VERSION ?= v1.15.0-beta.1
 ARCH          ?= arm64
 GO_IMAGE      ?= golang:1.26
 OUT           ?= _out

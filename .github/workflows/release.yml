@@ -27,7 +27,7 @@ jobs:
       versions: ${{ steps.list.outputs.versions }}
     steps:
       - uses: actions/checkout@v5
-      # the same list CI boots: the pinned version and the newest release of every supported minor
+      # the same list CI boots: the newest release of each of the last three minors
       - id: list
         run: echo "versions=$(hack/talos-versions.sh)" >> "$GITHUB_OUTPUT"
 

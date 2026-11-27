@@ -15,6 +15,6 @@ C nc -z -w 8 1.1.1.1 443 >/dev/null 2>&1 && pass "the device reaches the Interne
 C nc -z -w 8 9.9.9.9 853 >/dev/null 2>&1 && pass "on any port (no outbound filtering)" || fail "the device cannot reach 9.9.9.9:853"
 D doubleclick.net A | grep -q 'status: NXDOMAIN' && pass "an ad domain is blocked" || fail "doubleclick.net: $(D doubleclick.net A | grep status)"
 D ad.doubleclick.net A | grep -q 'status: NXDOMAIN' && pass "its subdomains too" || fail "ad.doubleclick.net: $(D ad.doubleclick.net A | grep status)"
-D ok.doubleclick.net A | grep -q 'status: NXDOMAIN' && fail "the allowed name is blocked" || pass "an allowed name inside it is not blocked"
+[ -n "$(D +short www.example.org A | head -1)" ] && pass "a name allowed inside a blocked domain still resolves" || fail "www.example.org (allowed): $(D www.example.org A | grep status)"
 [ -z "$(ask "$lease" 8080)" ] && pass "from outside: the device's own server is unreachable" || fail "from outside: the device answers on 8080"
 [ -z "$(ask "$ip" 53)" ] && pass "from outside: the router's DNS is closed" || fail "from outside: the router's DNS answers"

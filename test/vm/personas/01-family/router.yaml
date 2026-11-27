@@ -61,5 +61,5 @@ listenLinks: [lan0]
 upstreams: [9.9.9.9, 149.112.112.112]
 localDomain: home.arpa
 blocking:
-  domains: [doubleclick.net]
-  allow: [ok.doubleclick.net]
+  domains: [doubleclick.net, example.org]
+  allow: [www.example.org]

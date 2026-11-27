@@ -1,14 +1,13 @@
 #!/bin/sh
-# Prints the Talos versions to test as a JSON list: the one pinned in the Makefile, then the newest
-# release of every minor from MIN on (a stable release, else its newest pre-release), as published
-# on ghcr.io/siderolabs/talosctl.
+# Prints the Talos versions to test as a JSON list: the newest release of each of the last three
+# minors, from MIN on (a stable release, else its newest pre-release), as published on
+# ghcr.io/siderolabs/talosctl.
 # Usage: hack/talos-versions.sh [min minor, default 1.14]
 set -eu
-pinned=$(sed -n 's/^TALOS_VERSION *?= *//p' "$(dirname "$0")/../Makefile")
-exec python3 - "$pinned" "${1:-1.14}" <<'PY'
+exec python3 - "${1:-1.14}" <<'PY'
 import json, re, sys, urllib.request
 
-pinned, floor = sys.argv[1], tuple(int(x) for x in sys.argv[2].split("."))
+floor = tuple(int(x) for x in sys.argv[1].split("."))
 registry = "https://ghcr.io"
 
 
@@ -38,5 +37,5 @@ for tag in tags:
     if minor not in newest or key > newest[minor][0]:
         newest[minor] = (key, tag)
 
-print(json.dumps([pinned] + [t for _, (_, t) in sorted(newest.items()) if t != pinned]))
+print(json.dumps([t for _, (_, t) in sorted(newest.items())][-3:]))
 PY

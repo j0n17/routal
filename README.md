@@ -194,10 +194,10 @@ make clab          # the same checks on a containerlab topology (test/clab/routa
 
 GitHub Actions (`.github/workflows/ci.yml`) runs `make check`, `make integration`, `make fuzz
 FUZZTIME=30s` and builds the extension for amd64 and arm64 on every push and pull request.
-It also validates the examples and builds the installer for every Talos version listed by
-`hack/talos-versions.sh` (the one pinned in the Makefile, and the newest release of every minor
-from 1.14 on), on every push and every Monday. For one version locally:
-`make check-talos installer TALOS_VERSION=v1.15.0-beta.0`.
+It also validates the examples, builds the installer and boots it for every Talos version listed
+by `hack/talos-versions.sh` (the newest release of each of the last three minors, from 1.14 on),
+on every push and every Monday. For one version locally:
+`make check-talos installer TALOS_VERSION=v1.14.7`.
 
 `make vm-test` boots that Talos with the extension in a VM (tart on an Apple silicon Mac; QEMU
 with KVM and sudo on Linux, which is what CI runs for every version), applies `test/vm`, and
@@ -238,10 +238,10 @@ make clab          # the same checks on a containerlab topology (test/clab/routa
 
 GitHub Actions (`.github/workflows/ci.yml`) runs `make check`, `make integration`, `make fuzz
 FUZZTIME=30s` and builds the extension for amd64 and arm64 on every push and pull request.
-It also validates the examples and builds the installer for every Talos version listed by
-`hack/talos-versions.sh` (the one pinned in the Makefile, and the newest release of every minor
-from 1.14 on), on every push and every Monday. For one version locally:
-`make check-talos installer TALOS_VERSION=v1.15.0-beta.0`.
+It also validates the examples, builds the installer and boots it for every Talos version listed
+by `hack/talos-versions.sh` (the newest release of each of the last three minors, from 1.14 on),
+on every push and every Monday. For one version locally:
+`make check-talos installer TALOS_VERSION=v1.14.7`.
 
 `make vm-test` boots that Talos with the extension in a VM (tart on an Apple silicon Mac; QEMU
 with KVM and sudo on Linux, which is what CI runs for every version), applies `test/vm`, and

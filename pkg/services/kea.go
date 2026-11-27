@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"net/netip"
 	"slices"
 	"strings"
@@ -87,7 +88,7 @@ func kea4(cfg *config.Config, e env.Env, d Dirs) (string, []string) {
 
 	ifaces, subnets := []string{}, []obj{}
 
-	for i, srv := range cfg.DHCPServers {
+	for _, srv := range cfg.DHCPServers {
 		subnet := srv.Subnet
 
 		var router netip.Addr
@@ -162,7 +163,7 @@ func kea4(cfg *config.Config, e env.Env, d Dirs) (string, []string) {
 		ifaces = append(ifaces, iface)
 
 		subnets = append(subnets, obj{
-			"id":             i + 1,
+			"id":             subnetID(subnet),
 			"subnet":         subnet.String(),
 			"interface":      iface,
 			"pools":          []obj{{"pool": fmt.Sprintf("%s - %s", srv.RangeStart, srv.RangeEnd)}},
@@ -205,7 +206,7 @@ func kea6(cfg *config.Config, e env.Env, d Dirs) (string, []string) {
 
 	ifaces, subnets := []string{}, []obj{}
 
-	for i, ra := range cfg.RouterAdvertisements {
+	for _, ra := range cfg.RouterAdvertisements {
 		if !ra.Other {
 			continue
 		}
@@ -233,7 +234,7 @@ func kea6(cfg *config.Config, e env.Env, d Dirs) (string, []string) {
 		ifaces = append(ifaces, iface)
 
 		subnets = append(subnets, obj{
-			"id":           i + 1,
+			"id":           subnetID(prefix),
 			"subnet":       prefix.String(),
 			"interface":    iface,
 			"option-data":  options,
@@ -256,4 +257,14 @@ func joinAddrs(addrs []netip.Addr, sep string) string {
 	}
 
 	return strings.Join(s, sep)
+}
+
+// subnetID is the Kea id of a subnet: leases are stored with it, so it must not change when another
+// subnet is added, removed or moved in router.yaml. It only depends on the prefix.
+func subnetID(p netip.Prefix) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(p.Masked().String()))
+
+	// Kea accepts 1 to 4294967294
+	return h.Sum32()%4294967294 + 1
 }

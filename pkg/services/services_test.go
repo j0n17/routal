@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -373,5 +374,74 @@ func TestServiceAccounts(t *testing.T) {
 				t.Errorf("chronyd keeps a command socket:\n%s", s.Config)
 			}
 		}
+	}
+}
+
+// Kea stores leases with the id of their subnet: adding a DHCP server before another one must not
+// renumber it.
+func TestKeaSubnetIDsAreStable(t *testing.T) {
+	const zones = `apiVersion: v1alpha1
+kind: FirewallZoneConfig
+name: lan
+links: [lan0, guest0]
+`
+
+	server := func(name, link, net string) string {
+		return fmt.Sprintf("---\napiVersion: v1alpha1\nkind: DHCPServerConfig\nname: %s\nlink: %s\nrangeStart: %s.100\nrangeEnd: %s.200\n", name, link, net, net)
+	}
+
+	ids := func(doc string) map[string]float64 {
+		cfg, err := config.Load([]byte(doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		addrs := map[string][]netip.Prefix{
+			"lan0":   {netip.MustParsePrefix("192.168.50.1/24")},
+			"guest0": {netip.MustParsePrefix("192.168.60.1/24")},
+		}
+		e := env.Env{
+			Resolve: func(n string) string { return n },
+			Addrs:   func(n string) []netip.Prefix { return addrs[n] },
+		}
+
+		out := map[string]float64{}
+
+		for _, s := range services.Render(cfg, e, services.DefaultDirs) {
+			if s.Name != "kea-dhcp4" {
+				continue
+			}
+
+			var conf struct {
+				Dhcp4 struct {
+					Subnet4 []struct {
+						ID     float64 `json:"id"`
+						Subnet string  `json:"subnet"`
+					} `json:"subnet4"`
+				} `json:"Dhcp4"`
+			}
+
+			if err := json.Unmarshal([]byte(s.Config[strings.Index(s.Config, "\n{"):]), &conf); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, sn := range conf.Dhcp4.Subnet4 {
+				out[sn.Subnet] = sn.ID
+			}
+		}
+
+		return out
+	}
+
+	alone := ids(zones + server("lan", "lan0", "192.168.50"))
+	both := ids(zones + server("guest", "guest0", "192.168.60") + server("lan", "lan0", "192.168.50"))
+
+	lan := alone["192.168.50.0/24"]
+	if lan < 1 || lan > 4294967294 || both["192.168.50.0/24"] != lan {
+		t.Errorf("the LAN subnet has id %v alone and %v after a guest network was added", lan, both["192.168.50.0/24"])
+	}
+
+	if both["192.168.60.0/24"] == lan || len(both) != 2 {
+		t.Errorf("subnet ids: %v", both)
 	}
 }
